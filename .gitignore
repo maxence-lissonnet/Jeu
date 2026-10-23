@@ -1,0 +1,16 @@
+# Unreal Engine — fichiers générés
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+.idea/
+*.sln
+*.VC.db
+*.opensdf
+*.sdf
+*.suo
+
+# Copies de sauvegarde et fichiers intermédiaires de l'équipe (conservés en local)
+*.bak-*
+*.tmp

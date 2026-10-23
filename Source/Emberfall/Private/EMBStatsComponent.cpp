@@ -1,0 +1,322 @@
+// Copyright ADWEB Conseil. Tous droits réservés.
+
+#include "EMBStatsComponent.h"
+#include "Emberfall.h"
+#include "EMBCombatTypes.h"
+#include "GameFramework/Actor.h"
+#include "Engine/World.h"
+#include "Net/UnrealNetwork.h"
+
+UEMBStatsComponent::UEMBStatsComponent()
+{
+	SetIsReplicatedByDefault(true);
+	bWantsInitializeComponent = true;
+
+	/*
+	 * Choix d'optimisation : pas de Tick permanent.
+	 * Le Tick ne sert qu'à la régénération (endurance, poise). Il démarre désactivé, n'est réveillé
+	 * par WakeRegeneration() que lorsqu'une jauge quitte son maximum, et se rendort tout seul dès que
+	 * tout est plein. Un acteur au repos (cas le plus fréquent, y compris le dragon hors combat)
+	 * ne coûte donc aucun Tick. Quand il tourne, il le fait à 20 Hz (TickInterval) : la régénération
+	 * utilise le DeltaTime réel, donc le résultat est identique à un tick par frame, pour 3 fois moins d'appels
+	 * à 60 fps. Seul le serveur fait tourner la régénération.
+	 */
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+	PrimaryComponentTick.TickInterval = 0.05f;
+
+	MaxHealth = EMBCombatDefaults::MaxHealth;
+	MaxStamina = EMBCombatDefaults::MaxStamina;
+	StaminaRegenRate = EMBCombatDefaults::StaminaRegenRate;
+	StaminaRegenDelay = EMBCombatDefaults::StaminaRegenDelay;
+	ExhaustedRegenDelay = EMBCombatDefaults::ExhaustedRegenDelay;
+	MaxPoise = EMBCombatDefaults::MaxPoise;
+	PoiseRegenRate = EMBCombatDefaults::PoiseRegenRate;
+	PoiseRegenDelay = EMBCombatDefaults::PoiseRegenDelay;
+
+	Health = MaxHealth;
+	Stamina = MaxStamina;
+	Poise = MaxPoise;
+	RepPoise = MaxPoise;
+}
+
+void UEMBStatsComponent::InitializeComponent()
+{
+	Super::InitializeComponent();
+
+	// Initialisation côté serveur uniquement : les clients reçoivent les valeurs par réplication.
+	// Fait ici (et non au BeginPlay) pour que les surcharges de MaxHealth faites en Blueprint ou par
+	// SetMaxHealth() au BeginPlay du boss restent cohérentes quel que soit l'ordre des BeginPlay.
+	if (HasAuthorityOwner())
+	{
+		Health = MaxHealth;
+		Stamina = MaxStamina;
+		Poise = MaxPoise;
+		RepPoise = MaxPoise;
+	}
+}
+
+float UEMBStatsComponent::GetPoise() const
+{
+	return HasAuthorityOwner() ? Poise : RepPoise;
+}
+
+void UEMBStatsComponent::SyncReplicatedPoise()
+{
+	// Seuil d'1 point : ne répliquer que les variations visibles, plus les bornes exactes (0 et maximum)
+	// pour que l'UI n'affiche jamais une barre "presque pleine" alors qu'elle est pleine.
+	if (FMath::Abs(Poise - RepPoise) >= 1.f || Poise <= 0.f || Poise >= MaxPoise)
+	{
+		RepPoise = Poise;
+	}
+}
+
+void UEMBStatsComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (!HasAuthorityOwner())
+	{
+		SetComponentTickEnabled(false);
+	}
+}
+
+bool UEMBStatsComponent::HasAuthorityOwner() const
+{
+	const AActor* Owner = GetOwner();
+	return Owner && Owner->HasAuthority();
+}
+
+float UEMBStatsComponent::GetHealthPercent() const
+{
+	return MaxHealth > 0.f ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
+}
+
+void UEMBStatsComponent::BroadcastAttribute(EEMBStatType Type) const
+{
+	switch (Type)
+	{
+	case EEMBStatType::Health:
+		OnAttributeChanged.Broadcast(Type, Health, MaxHealth);
+		break;
+	case EEMBStatType::Stamina:
+		OnAttributeChanged.Broadcast(Type, Stamina, MaxStamina);
+		break;
+	case EEMBStatType::Poise:
+		OnAttributeChanged.Broadcast(Type, GetPoise(), MaxPoise);
+		break;
+	}
+}
+
+void UEMBStatsComponent::WakeRegeneration()
+{
+	if (HasAuthorityOwner() && !IsComponentTickEnabled())
+	{
+		SetComponentTickEnabled(true);
+	}
+}
+
+bool UEMBStatsComponent::ConsumeStamina(float Amount)
+{
+	if (!HasAuthorityOwner())
+	{
+		// Les clients ne modifient jamais les jauges : ils lisent la valeur répliquée.
+		UE_LOG(LogEmberfall, Verbose, TEXT("ConsumeStamina ignoré sur un client (%s)."), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	if (IsDead() || Stamina <= 0.f)
+	{
+		return false;
+	}
+	if (!FMath::IsFinite(Amount) || Amount <= 0.f)
+	{
+		return true; // Rien à consommer, mais l'action reste permise.
+	}
+
+	Stamina = FMath::Max(0.f, Stamina - Amount);
+
+	// Un joueur épuisé attend plus longtemps avant de récupérer (règle souls).
+	const float Delay = (Stamina <= 0.f) ? ExhaustedRegenDelay : StaminaRegenDelay;
+	StaminaRegenResumeTime = GetWorld()->GetTimeSeconds() + Delay;
+
+	BroadcastAttribute(EEMBStatType::Stamina);
+	WakeRegeneration();
+	return true;
+}
+
+float UEMBStatsComponent::ApplyDamage(float Amount, AActor* DamageCauser)
+{
+	if (!HasAuthorityOwner() || IsDead() || !FMath::IsFinite(Amount) || Amount <= 0.f)
+	{
+		return 0.f;
+	}
+
+	const float Dealt = FMath::Min(Health, Amount);
+	Health -= Dealt;
+	BroadcastAttribute(EEMBStatType::Health);
+
+	if (Health <= 0.f)
+	{
+		Health = 0.f;
+		// Plus de régénération pour un mort.
+		SetComponentTickEnabled(false);
+		OnDeath.Broadcast(DamageCauser);
+	}
+	return Dealt;
+}
+
+bool UEMBStatsComponent::ApplyPoiseDamage(float Amount, AActor* Instigator)
+{
+	if (!HasAuthorityOwner() || IsDead() || !FMath::IsFinite(Amount) || Amount <= 0.f)
+	{
+		return false;
+	}
+
+	Poise -= Amount;
+	// Tout dégât de poise (même sans rupture) repousse la régénération.
+	PoiseRegenResumeTime = GetWorld()->GetTimeSeconds() + PoiseRegenDelay;
+
+	if (Poise <= 0.f)
+	{
+		// Rupture : la jauge est remise au maximum (le coup suivant ne brise pas immédiatement).
+		Poise = MaxPoise;
+		SyncReplicatedPoise();
+		BroadcastAttribute(EEMBStatType::Poise);
+		OnPoiseBroken.Broadcast(Instigator);
+		return true;
+	}
+
+	SyncReplicatedPoise();
+	BroadcastAttribute(EEMBStatType::Poise);
+	WakeRegeneration();
+	return false;
+}
+
+void UEMBStatsComponent::Heal(float Amount)
+{
+	if (!HasAuthorityOwner() || IsDead() || !FMath::IsFinite(Amount) || Amount <= 0.f)
+	{
+		return;
+	}
+	Health = FMath::Min(MaxHealth, Health + Amount);
+	BroadcastAttribute(EEMBStatType::Health);
+}
+
+void UEMBStatsComponent::RestoreFromSave(float InHealth, float InStamina)
+{
+	if (!HasAuthorityOwner())
+	{
+		return;
+	}
+
+	// Valeurs non numériques ou aberrantes (sauvegarde corrompue) : on retombe sur le plein.
+	Health = FMath::IsFinite(InHealth) ? FMath::Clamp(InHealth, 1.f, MaxHealth) : MaxHealth;
+	Stamina = FMath::IsFinite(InStamina) ? FMath::Clamp(InStamina, 0.f, MaxStamina) : MaxStamina;
+	Poise = MaxPoise;
+	SyncReplicatedPoise();
+
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	StaminaRegenResumeTime = Now;
+	PoiseRegenResumeTime = Now;
+
+	BroadcastAttribute(EEMBStatType::Health);
+	BroadcastAttribute(EEMBStatType::Stamina);
+	BroadcastAttribute(EEMBStatType::Poise);
+	WakeRegeneration();
+}
+
+void UEMBStatsComponent::SetStaminaRegenMultiplier(float Multiplier)
+{
+	StaminaRegenMultiplier = FMath::Max(0.f, Multiplier);
+}
+
+void UEMBStatsComponent::SetMaxHealth(float NewMax, bool bRefill)
+{
+	if (!HasAuthorityOwner() || !FMath::IsFinite(NewMax))
+	{
+		return;
+	}
+	MaxHealth = FMath::Max(1.f, NewMax);
+	Health = bRefill ? MaxHealth : FMath::Min(Health, MaxHealth);
+	BroadcastAttribute(EEMBStatType::Health);
+}
+
+void UEMBStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (!HasAuthorityOwner() || IsDead())
+	{
+		SetComponentTickEnabled(false);
+		return;
+	}
+
+	const double Now = GetWorld()->GetTimeSeconds();
+	bool bNeedsMoreTicks = false;
+
+	if (Stamina < MaxStamina)
+	{
+		bNeedsMoreTicks = true;
+		if (Now >= StaminaRegenResumeTime)
+		{
+			Stamina = FMath::Min(MaxStamina, Stamina + StaminaRegenRate * StaminaRegenMultiplier * DeltaTime);
+			BroadcastAttribute(EEMBStatType::Stamina);
+		}
+	}
+
+	if (Poise < MaxPoise)
+	{
+		bNeedsMoreTicks = true;
+		if (Now >= PoiseRegenResumeTime)
+		{
+			Poise = FMath::Min(MaxPoise, Poise + PoiseRegenRate * DeltaTime);
+			SyncReplicatedPoise();
+			BroadcastAttribute(EEMBStatType::Poise);
+		}
+	}
+
+	// Tout est plein : on s'endort jusqu'à la prochaine consommation (voir le commentaire du constructeur).
+	if (!bNeedsMoreTicks)
+	{
+		SetComponentTickEnabled(false);
+	}
+}
+
+void UEMBStatsComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(UEMBStatsComponent, Health);
+	DOREPLIFETIME(UEMBStatsComponent, RepPoise);
+
+	// L'endurance change en continu (régénération) : la répliquer à tous les clients serait du
+	// trafic gaspillé, seul le propriétaire (HUD) en a besoin.
+	DOREPLIFETIME_CONDITION(UEMBStatsComponent, Stamina, COND_OwnerOnly);
+
+	DOREPLIFETIME(UEMBStatsComponent, MaxHealth);
+
+	// Maxima d'endurance et de poise fixés par les valeurs par défaut : envoyés une seule fois.
+	DOREPLIFETIME_CONDITION(UEMBStatsComponent, MaxStamina, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(UEMBStatsComponent, MaxPoise, COND_InitialOnly);
+}
+
+void UEMBStatsComponent::OnRep_Health(float OldValue)
+{
+	BroadcastAttribute(EEMBStatType::Health);
+}
+
+void UEMBStatsComponent::OnRep_Stamina(float OldValue)
+{
+	BroadcastAttribute(EEMBStatType::Stamina);
+}
+
+void UEMBStatsComponent::OnRep_Poise(float OldValue)
+{
+	BroadcastAttribute(EEMBStatType::Poise);
+}
+
+void UEMBStatsComponent::OnRep_MaxHealth(float OldValue)
+{
+	BroadcastAttribute(EEMBStatType::Health);
+}
