@@ -1,0 +1,80 @@
+---,OutputId,OutputCount,bOutputIsItem,Ingredients,RequiredStation,RequiredGlyph,CraftTime,XP,bIsRepair,RepairTargetItem
+IronIngot,IronIngot,1,False,"((""IronOre"", 2),(""Wood"", 1))",Smelter,G_Smelting,6,3,False,
+BlackSteelIngot,BlackSteelIngot,1,False,"((""IronIngot"", 2),(""Wood"", 3))",Smelter,G_BlackSteel,10,12,False,
+Axe_Flint,Axe_Flint,1,True,"((""Flint"", 3),(""Wood"", 2),(""Fiber"", 2))",,,8,10,False,
+Pickaxe_Flint,Pickaxe_Flint,1,True,"((""Flint"", 4),(""Wood"", 2),(""Fiber"", 2))",,,10,10,False,
+Knife_Flint,Knife_Flint,1,True,"((""Flint"", 2),(""Wood"", 1),(""Fiber"", 1))",,,6,8,False,
+Axe_Iron,Axe_Iron,1,True,"((""IronIngot"", 3),(""Wood"", 2),(""Fiber"", 1))",Forge,G_Smelting,15,25,False,
+Pickaxe_Iron,Pickaxe_Iron,1,True,"((""IronIngot"", 4),(""Wood"", 2),(""Fiber"", 1))",Forge,G_Smelting,18,25,False,
+Knife_Iron,Knife_Iron,1,True,"((""IronIngot"", 2),(""Wood"", 1),(""Fiber"", 1))",Forge,G_Smelting,12,20,False,
+Axe_BlackSteel,Axe_BlackSteel,1,True,"((""BlackSteelIngot"", 3),(""Wood"", 2),(""Fiber"", 2))",Forge,G_BlackSteel,25,60,False,
+Pickaxe_BlackSteel,Pickaxe_BlackSteel,1,True,"((""BlackSteelIngot"", 4),(""Wood"", 2),(""Fiber"", 2))",Forge,G_BlackSteel,30,60,False,
+Knife_BlackSteel,Knife_BlackSteel,1,True,"((""BlackSteelIngot"", 2),(""Wood"", 1),(""Fiber"", 1))",Forge,G_BlackSteel,20,50,False,
+Axe_Dragonbone,Axe_Dragonbone,1,True,"((""DragonBone"", 2),(""BlackSteelIngot"", 2),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,40,150,False,
+Pickaxe_Dragonbone,Pickaxe_Dragonbone,1,True,"((""DragonBone"", 3),(""BlackSteelIngot"", 2),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,45,150,False,
+Knife_Dragonbone,Knife_Dragonbone,1,True,"((""DragonBone"", 1),(""BlackSteelIngot"", 1),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,30,120,False,
+Club_Wood,Club_Wood,1,True,"((""Wood"", 8),(""Fiber"", 2))",Workbench,G_Workbench,10,10,False,
+Sword_Iron,Sword_Iron,1,True,"((""IronIngot"", 6),(""Wood"", 1),(""Fiber"", 1))",Forge,G_IronWeapons,25,40,False,
+Greatsword_BlackSteel,Greatsword_BlackSteel,1,True,"((""BlackSteelIngot"", 8),(""IronIngot"", 2),(""Wood"", 2))",Forge,G_BlackSteel,40,100,False,
+Blade_DragonFang,Blade_DragonFang,1,True,"((""DragonBone"", 3),(""DragonScale"", 2),(""BlackSteelIngot"", 4),(""EmberHeart"", 1))",DraconicForge,G_DragonboneWeapons,60,250,False,
+Shield_Wood,Shield_Wood,1,True,"((""Wood"", 10),(""Fiber"", 2))",Workbench,G_Workbench,10,10,False,
+Shield_Iron,Shield_Iron,1,True,"((""IronIngot"", 6),(""Wood"", 2))",Forge,G_IronWeapons,20,35,False,
+Shield_Draconic,Shield_Draconic,1,True,"((""DragonScale"", 6),(""DragonBone"", 1),(""IronIngot"", 3))",DraconicForge,G_DragonscaleArmor,45,180,False,
+Hide_Head,Hide_Head,1,True,"((""Fiber"", 8))",Workbench,G_HideArmor,8,8,False,
+Hide_Chest,Hide_Chest,1,True,"((""Fiber"", 16))",Workbench,G_HideArmor,14,15,False,
+Hide_Hands,Hide_Hands,1,True,"((""Fiber"", 6))",Workbench,G_HideArmor,6,6,False,
+Hide_Legs,Hide_Legs,1,True,"((""Fiber"", 12))",Workbench,G_HideArmor,10,12,False,
+Fur_Head,Fur_Head,1,True,"((""Fiber"", 6),(""RawMeat"", 3))",Workbench,G_FurArmor,10,15,False,
+Fur_Chest,Fur_Chest,1,True,"((""Fiber"", 10),(""RawMeat"", 6))",Workbench,G_FurArmor,16,30,False,
+Fur_Hands,Fur_Hands,1,True,"((""Fiber"", 4),(""RawMeat"", 2))",Workbench,G_FurArmor,8,12,False,
+Fur_Legs,Fur_Legs,1,True,"((""Fiber"", 8),(""RawMeat"", 4))",Workbench,G_FurArmor,12,22,False,
+Iron_Head,Iron_Head,1,True,"((""IronIngot"", 5))",Forge,G_IronArmor,15,30,False,
+Iron_Chest,Iron_Chest,1,True,"((""IronIngot"", 10))",Forge,G_IronArmor,25,60,False,
+Iron_Hands,Iron_Hands,1,True,"((""IronIngot"", 4))",Forge,G_IronArmor,12,25,False,
+Iron_Legs,Iron_Legs,1,True,"((""IronIngot"", 7))",Forge,G_IronArmor,20,45,False,
+Dragonscale_Head,Dragonscale_Head,1,True,"((""DragonScale"", 4),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,30,90,False,
+Dragonscale_Chest,Dragonscale_Chest,1,True,"((""DragonScale"", 8),(""BlackSteelIngot"", 2))",DraconicForge,G_DragonscaleArmor,50,180,False,
+Dragonscale_Hands,Dragonscale_Hands,1,True,"((""DragonScale"", 3),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,25,75,False,
+Dragonscale_Legs,Dragonscale_Legs,1,True,"((""DragonScale"", 6),(""BlackSteelIngot"", 2))",DraconicForge,G_DragonscaleArmor,40,135,False,
+CookedMeat,CookedMeat,1,False,"((""RawMeat"", 1))",Campfire,G_Cooking,8,3,False,
+Stew,Stew,1,False,"((""RawMeat"", 1),(""Berries"", 2),(""Water"", 1))",Campfire,G_Cooking,12,6,False,
+BoiledWater,BoiledWater,1,False,"((""Water"", 1))",Campfire,G_Campfire,5,1,False,
+HealingFlask,HealingFlask,1,False,"((""Berries"", 3),(""Fiber"", 2),(""BoiledWater"", 1))",Campfire,G_HealingFlask,12,5,False,
+Antidote,Antidote,1,False,"((""Berries"", 2),(""Fiber"", 1),(""BoiledWater"", 1))",Campfire,G_Antidote,10,8,False,
+CorruptionTonic,CorruptionTonic,1,False,"((""MoonSilver"", 1),(""Berries"", 3),(""BoiledWater"", 1))",Campfire,G_CorruptionTonic,15,20,False,
+FireResistOil,FireResistOil,1,False,"((""DragonScale"", 1),(""Fiber"", 2),(""BoiledWater"", 1))",Campfire,G_FireResistOil,20,35,False,
+Repair_Axe_Flint,Axe_Flint,1,True,"((""Flint"", 1),(""Wood"", 1),(""Fiber"", 1))",,,4,0,True,Axe_Flint
+Repair_Pickaxe_Flint,Pickaxe_Flint,1,True,"((""Flint"", 1),(""Wood"", 1),(""Fiber"", 1))",,,5,0,True,Pickaxe_Flint
+Repair_Knife_Flint,Knife_Flint,1,True,"((""Flint"", 1),(""Wood"", 1),(""Fiber"", 1))",,,3,0,True,Knife_Flint
+Repair_Axe_Iron,Axe_Iron,1,True,"((""IronIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_Smelting,8,0,True,Axe_Iron
+Repair_Pickaxe_Iron,Pickaxe_Iron,1,True,"((""IronIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_Smelting,9,0,True,Pickaxe_Iron
+Repair_Knife_Iron,Knife_Iron,1,True,"((""IronIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_Smelting,6,0,True,Knife_Iron
+Repair_Axe_BlackSteel,Axe_BlackSteel,1,True,"((""BlackSteelIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_BlackSteel,12,0,True,Axe_BlackSteel
+Repair_Pickaxe_BlackSteel,Pickaxe_BlackSteel,1,True,"((""BlackSteelIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_BlackSteel,15,0,True,Pickaxe_BlackSteel
+Repair_Knife_BlackSteel,Knife_BlackSteel,1,True,"((""BlackSteelIngot"", 1),(""Wood"", 1),(""Fiber"", 1))",Forge,G_BlackSteel,10,0,True,Knife_BlackSteel
+Repair_Axe_Dragonbone,Axe_Dragonbone,1,True,"((""DragonBone"", 1),(""BlackSteelIngot"", 1),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,20,0,True,Axe_Dragonbone
+Repair_Pickaxe_Dragonbone,Pickaxe_Dragonbone,1,True,"((""DragonBone"", 1),(""BlackSteelIngot"", 1),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,22,0,True,Pickaxe_Dragonbone
+Repair_Knife_Dragonbone,Knife_Dragonbone,1,True,"((""DragonBone"", 1),(""BlackSteelIngot"", 1),(""DragonScale"", 1))",DraconicForge,G_DragonboneWeapons,15,0,True,Knife_Dragonbone
+Repair_Club_Wood,Club_Wood,1,True,"((""Wood"", 2),(""Fiber"", 1))",Workbench,G_Workbench,5,0,True,Club_Wood
+Repair_Sword_Iron,Sword_Iron,1,True,"((""IronIngot"", 2),(""Wood"", 1),(""Fiber"", 1))",Forge,G_IronWeapons,12,0,True,Sword_Iron
+Repair_Greatsword_BlackSteel,Greatsword_BlackSteel,1,True,"((""BlackSteelIngot"", 2),(""IronIngot"", 1),(""Wood"", 1))",Forge,G_BlackSteel,20,0,True,Greatsword_BlackSteel
+Repair_Blade_DragonFang,Blade_DragonFang,1,True,"((""DragonBone"", 1),(""DragonScale"", 1),(""BlackSteelIngot"", 1),(""EmberHeart"", 1))",DraconicForge,G_DragonboneWeapons,30,0,True,Blade_DragonFang
+Repair_Shield_Wood,Shield_Wood,1,True,"((""Wood"", 3),(""Fiber"", 1))",Workbench,G_Workbench,5,0,True,Shield_Wood
+Repair_Shield_Iron,Shield_Iron,1,True,"((""IronIngot"", 2),(""Wood"", 1))",Forge,G_IronWeapons,10,0,True,Shield_Iron
+Repair_Shield_Draconic,Shield_Draconic,1,True,"((""DragonScale"", 2),(""DragonBone"", 1),(""IronIngot"", 1))",DraconicForge,G_DragonscaleArmor,22,0,True,Shield_Draconic
+Repair_Hide_Head,Hide_Head,1,True,"((""Fiber"", 2))",Workbench,G_HideArmor,4,0,True,Hide_Head
+Repair_Hide_Chest,Hide_Chest,1,True,"((""Fiber"", 4))",Workbench,G_HideArmor,7,0,True,Hide_Chest
+Repair_Hide_Hands,Hide_Hands,1,True,"((""Fiber"", 2))",Workbench,G_HideArmor,3,0,True,Hide_Hands
+Repair_Hide_Legs,Hide_Legs,1,True,"((""Fiber"", 3))",Workbench,G_HideArmor,5,0,True,Hide_Legs
+Repair_Fur_Head,Fur_Head,1,True,"((""Fiber"", 2),(""RawMeat"", 1))",Workbench,G_FurArmor,5,0,True,Fur_Head
+Repair_Fur_Chest,Fur_Chest,1,True,"((""Fiber"", 3),(""RawMeat"", 2))",Workbench,G_FurArmor,8,0,True,Fur_Chest
+Repair_Fur_Hands,Fur_Hands,1,True,"((""Fiber"", 1),(""RawMeat"", 1))",Workbench,G_FurArmor,4,0,True,Fur_Hands
+Repair_Fur_Legs,Fur_Legs,1,True,"((""Fiber"", 2),(""RawMeat"", 1))",Workbench,G_FurArmor,6,0,True,Fur_Legs
+Repair_Iron_Head,Iron_Head,1,True,"((""IronIngot"", 2))",Forge,G_IronArmor,8,0,True,Iron_Head
+Repair_Iron_Chest,Iron_Chest,1,True,"((""IronIngot"", 3))",Forge,G_IronArmor,12,0,True,Iron_Chest
+Repair_Iron_Hands,Iron_Hands,1,True,"((""IronIngot"", 1))",Forge,G_IronArmor,6,0,True,Iron_Hands
+Repair_Iron_Legs,Iron_Legs,1,True,"((""IronIngot"", 2))",Forge,G_IronArmor,10,0,True,Iron_Legs
+Repair_Dragonscale_Head,Dragonscale_Head,1,True,"((""DragonScale"", 1),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,15,0,True,Dragonscale_Head
+Repair_Dragonscale_Chest,Dragonscale_Chest,1,True,"((""DragonScale"", 2),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,25,0,True,Dragonscale_Chest
+Repair_Dragonscale_Hands,Dragonscale_Hands,1,True,"((""DragonScale"", 1),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,12,0,True,Dragonscale_Hands
+Repair_Dragonscale_Legs,Dragonscale_Legs,1,True,"((""DragonScale"", 2),(""BlackSteelIngot"", 1))",DraconicForge,G_DragonscaleArmor,20,0,True,Dragonscale_Legs

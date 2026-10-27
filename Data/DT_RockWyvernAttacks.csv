@@ -1,0 +1,3 @@
+---,AttackTag,Kind,AllowedPhases,MinRange,MaxRange,HalfAngleDeg,bRearOnly,RearMinAngleDeg,TelegraphTime,DodgeWindowStart,DodgeWindowEnd,DodgeWindow2Start,DodgeWindow2End,HitTimes,Damage,PoiseDamage,StaminaDamage,EffectRadius,KnockbackDistance,ActiveDuration,ImpactCount,DamageType,bParryable,bUnblockable,bAppliesBurn,bScripted,BaseWeight,PhaseWeights,Cooldown,Montage,BreathMode,VFX
+Bite,"(TagName=""Attack.Wyvern.Bite"")",Melee,"(1)",0,320,45,False,110,0.5,0.45,0.65,0,0,"(0.6)",60,20,0,0,0,0,0,Physical,True,False,False,False,40,"(1,1,1)",2,,Cone,
+LowSwoop,"(TagName=""Attack.Wyvern.LowSwoop"")",Charge,"(1)",600,1800,30,False,110,1.0,1.4,1.65,0,0,"(1.6)",80,40,0,280,0,0,0,Physical,False,False,False,False,30,"(1,1,1)",8,,Cone,

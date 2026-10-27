@@ -21,6 +21,7 @@ public class Emberfall : ModuleRules
 			"NavigationSystem",
 			"Niagara",
 			"DeveloperSettings",
+			"SignificanceManager",
 			"UMG",
 			"NetCore"
 		});

@@ -39,7 +39,13 @@ bool UEMBSaveGame::MigrateStep(int32 FromVersion)
 		//  - bHasSurvivalState = false : les joueurs reprennent les valeurs de survie par défaut ;
 		//  - BoundRespawnPieceSaveId = INDEX_NONE : aucune liaison (PlayerStart) ;
 		//  - DeathBags vide : aucun sac.
-		// Rien à convertir. Les futures étapes s'ajoutent ici (case 2: ...).
+		// Rien à convertir.
+		return true;
+	case 2:
+		// 2 -> 3 : AJOUT de champs seulement (équipement, file de fabrication, nœuds de récolte, météo). Un fichier v2 les
+		// lit à leurs valeurs par défaut, avec tous les drapeaux bHas...State à faux : à l'import, rien n'est appliqué,
+		// et les systèmes concernés démarrent à neuf (aucun objet, nœuds pleins, météo et heure initiales).
+		// Les futures étapes s'ajoutent ici (case 3: ...).
 		return true;
 	default:
 		return false;

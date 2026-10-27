@@ -143,10 +143,10 @@ public:
 	 * (PV remis au maximum, phase conservée, échelle coop recalculée à la prochaine rencontre) : la sauvegarde n'est pas bloquée.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Boss")
-	bool IsEncounterActive() const;
+	virtual bool IsEncounterActive() const;
 
 	/** Démarre le combat (mise à l'échelle coop des PV). Idempotent, appelé à la première détection d'un joueur. */
-	void BeginEncounter();
+	virtual void BeginEncounter();
 
 	// ------------------------------------------------------------------------------------------
 	// Délégués

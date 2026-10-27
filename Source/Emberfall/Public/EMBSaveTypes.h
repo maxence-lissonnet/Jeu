@@ -7,8 +7,11 @@
 #include "UObject/SoftObjectPath.h"
 #include "EMBBuildingTypes.h"
 #include "EMBInventoryComponent.h"
+#include "EMBItemTypes.h"
 #include "EMBProgressionTypes.h"
+#include "EMBResourceNodeTypes.h"
 #include "EMBSurvivalTypes.h"
+#include "EMBWeatherTypes.h"
 #include "EMBSaveTypes.generated.h"
 
 /**
@@ -100,6 +103,24 @@ struct EMBERFALL_API FEMBPlayerSaveData
 	bool bHasSurvivalState = false;
 
 	/**
+	 * (v3) Sac d'objets et objets équipés. Valable seulement si bHasEquipmentState (faux pour une sauvegarde v1/v2
+	 * migrée : le joueur démarre sans objet, comme un personnage neuf). Conservé tel quel pour un joueur mort :
+	 * seules les ressources partent dans le sac de mort.
+	 */
+	UPROPERTY(SaveGame)
+	FEMBEquipmentSaveData Equipment;
+
+	UPROPERTY(SaveGame)
+	bool bHasEquipmentState = false;
+
+	/** (v3) File de fabrication (ingrédients déjà consommés). Valable seulement si bHasCraftingState. Conservée pour un joueur mort. */
+	UPROPERTY(SaveGame)
+	FEMBCraftingSaveData Crafting;
+
+	UPROPERTY(SaveGame)
+	bool bHasCraftingState = false;
+
+	/**
 	 * (v2) SaveId (dans CE fichier) de la pièce à laquelle le joueur est lié comme point de réapparition, INDEX_NONE
 	 * si aucune. Les SaveId sont renumérotés à chaque sauvegarde : la valeur n'a de sens que dans le fichier qui la contient.
 	 */
@@ -164,4 +185,24 @@ struct EMBERFALL_API FEMBWorldSaveData
 	/** (v2) Sacs de mort non encore ramassés (un par joueur au plus). */
 	UPROPERTY(SaveGame)
 	TArray<FEMBDeathBagSaveData> DeathBags;
+
+	/**
+	 * (v3) Nœuds de récolte épuisés et leurs minuteries de réapparition. Valable seulement si bHasResourceNodesState
+	 * (faux pour une sauvegarde v1/v2 migrée : tous les nœuds sont pleins).
+	 */
+	UPROPERTY(SaveGame)
+	FEMBResourceNodesSaveData ResourceNodes;
+
+	UPROPERTY(SaveGame)
+	bool bHasResourceNodesState = false;
+
+	/**
+	 * (v3) Heure du jour et météo par biome. Valable seulement si bHasWeatherState (faux pour une sauvegarde v1/v2 migrée :
+	 * le monde repart à l'heure et à la météo initiales).
+	 */
+	UPROPERTY(SaveGame)
+	FEMBWeatherSaveData Weather;
+
+	UPROPERTY(SaveGame)
+	bool bHasWeatherState = false;
 };

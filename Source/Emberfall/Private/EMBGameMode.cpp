@@ -4,7 +4,11 @@
 #include "Emberfall.h"
 #include "EMBCombatComponent.h"
 #include "EMBCombatTypes.h"
+#include "EMBCraftingComponent.h"
+#include "EMBEquipmentComponent.h"
+#include "EMBItemTypes.h"
 #include "EMBPlayerCharacter.h"
+#include "EMBPlayerState.h"
 #include "EMBRespawnSubsystem.h"
 #include "EMBSurvivalComponent.h"
 #include "Engine/World.h"
@@ -84,6 +88,27 @@ void AEMBGameMode::RespawnPlayer(AController* Controller)
 		}
 	}
 
+	// 2 bis) Équipement (sac d'objets, emplacements) et file de fabrication : CONSERVÉS à la réapparition.
+	// Le pawn détruit les emporterait ; on les exporte avant et on les met en attente sur le PlayerState, qui
+	// survit au pawn. Le nouveau pawn les réimporte dans PossessedBy (AEMBPlayerCharacter) : si sa création
+	// échoue ici, les données restent en attente et seront reprises à la prochaine possession, pas perdues.
+	// (Le sac de mort, lui, ne contient que les ressources.)
+	AEMBPlayerState* EMBPlayerState = Controller->GetPlayerState<AEMBPlayerState>();
+	if (OldPawn && EMBPlayerState)
+	{
+		FEMBEquipmentSaveData EquipmentData;
+		FEMBCraftingSaveData CraftingData;
+		if (const UEMBEquipmentComponent* OldEquipment = OldPawn->FindComponentByClass<UEMBEquipmentComponent>())
+		{
+			OldEquipment->ExportSaveData(EquipmentData);
+		}
+		if (const UEMBCraftingComponent* OldCrafting = OldPawn->FindComponentByClass<UEMBCraftingComponent>())
+		{
+			OldCrafting->ExportSaveData(CraftingData);
+		}
+		EMBPlayerState->StorePendingLoadout(EquipmentData, CraftingData);
+	}
+
 	// 3) Ancien pawn détruit, nouveau pawn créé. Le détacher d'abord évite que le contrôleur garde une référence
 	// morte et que RestartPlayerAtTransform ne remplace un pawn encore vivant dans le monde.
 	if (OldPawn)
@@ -95,8 +120,18 @@ void AEMBGameMode::RespawnPlayer(AController* Controller)
 	RestartPlayerAtTransform(Controller, SpawnTransform);
 
 	// 4) Valeurs de réapparition sur le nouveau pawn (PossessedBy a déjà appliqué la progression).
-	if (APawn* NewPawn = Controller->GetPawn())
+	APawn* NewPawn = Controller->GetPawn();
+	if (!NewPawn)
 	{
+		// Création impossible (aucun emplacement libre, classe de pawn invalide...). L'équipement reste en attente
+		// sur le PlayerState : PossessedBy le réimportera dès qu'un pawn sera possédé.
+		UE_LOG(LogEmberfall, Warning, TEXT("RespawnPlayer : le nouveau pawn n'a pas pu être créé ; équipement et fabrication gardés en attente."));
+		return;
+	}
+
+	{
+		// L'équipement et la fabrication ont déjà été réimportés par PossessedBy (stats dérivées à jour).
+
 		if (UEMBSurvivalComponent* Survival = NewPawn->FindComponentByClass<UEMBSurvivalComponent>())
 		{
 			Survival->ApplyRespawnValues(); // Faim 60, soif 60, Corruption 0, température neutre.

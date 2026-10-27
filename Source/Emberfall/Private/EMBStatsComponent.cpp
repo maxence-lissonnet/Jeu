@@ -36,8 +36,8 @@ UEMBStatsComponent::UEMBStatsComponent()
 
 	Health = MaxHealth;
 	Stamina = MaxStamina;
-	Poise = MaxPoise;
-	RepPoise = MaxPoise;
+	Poise = GetMaxPoise();
+	RepPoise = GetMaxPoise();
 }
 
 void UEMBStatsComponent::InitializeComponent()
@@ -51,8 +51,8 @@ void UEMBStatsComponent::InitializeComponent()
 	{
 		Health = MaxHealth;
 		Stamina = MaxStamina;
-		Poise = MaxPoise;
-		RepPoise = MaxPoise;
+		Poise = GetMaxPoise();
+		RepPoise = GetMaxPoise();
 	}
 }
 
@@ -65,7 +65,7 @@ void UEMBStatsComponent::SyncReplicatedPoise()
 {
 	// Seuil d'1 point : ne répliquer que les variations visibles, plus les bornes exactes (0 et maximum)
 	// pour que l'UI n'affiche jamais une barre "presque pleine" alors qu'elle est pleine.
-	if (FMath::Abs(Poise - RepPoise) >= 1.f || Poise <= 0.f || Poise >= MaxPoise)
+	if (FMath::Abs(Poise - RepPoise) >= 1.f || Poise <= 0.f || Poise >= GetMaxPoise())
 	{
 		RepPoise = Poise;
 	}
@@ -114,7 +114,7 @@ void UEMBStatsComponent::BroadcastAttribute(EEMBStatType Type) const
 		OnAttributeChanged.Broadcast(Type, Stamina, GetMaxStamina());
 		break;
 	case EEMBStatType::Poise:
-		OnAttributeChanged.Broadcast(Type, GetPoise(), MaxPoise);
+		OnAttributeChanged.Broadcast(Type, GetPoise(), GetMaxPoise());
 		break;
 	}
 }
@@ -191,7 +191,7 @@ bool UEMBStatsComponent::ApplyPoiseDamage(float Amount, AActor* Instigator)
 	if (Poise <= 0.f)
 	{
 		// Rupture : la jauge est remise au maximum (le coup suivant ne brise pas immédiatement).
-		Poise = MaxPoise;
+		Poise = GetMaxPoise();
 		SyncReplicatedPoise();
 		BroadcastAttribute(EEMBStatType::Poise);
 		OnPoiseBroken.Broadcast(Instigator);
@@ -224,7 +224,7 @@ void UEMBStatsComponent::RestoreFromSave(float InHealth, float InStamina)
 	// Valeurs non numériques ou aberrantes (sauvegarde corrompue) : on retombe sur le plein.
 	Health = FMath::IsFinite(InHealth) ? FMath::Clamp(InHealth, 1.f, GetMaxHealth()) : GetMaxHealth();
 	Stamina = FMath::IsFinite(InStamina) ? FMath::Clamp(InStamina, 0.f, GetMaxStamina()) : GetMaxStamina();
-	Poise = MaxPoise;
+	Poise = GetMaxPoise();
 	SyncReplicatedPoise();
 
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
@@ -284,6 +284,26 @@ void UEMBStatsComponent::SetSurvivalModifiers(float MaxHealthMultiplier, float M
 	}
 }
 
+void UEMBStatsComponent::SetEquipmentPoiseBonus(float Bonus)
+{
+	if (!HasAuthorityOwner())
+	{
+		return;
+	}
+
+	const float NewBonus = FMath::IsFinite(Bonus) ? FMath::Max(0.f, Bonus) : 0.f;
+	if (FMath::IsNearlyEqual(NewBonus, EquipmentPoiseBonus))
+	{
+		return;
+	}
+
+	EquipmentPoiseBonus = NewBonus;
+	Poise = FMath::Min(Poise, GetMaxPoise());
+	SyncReplicatedPoise();
+	BroadcastAttribute(EEMBStatType::Poise);
+	WakeRegeneration(); // Un maximum relevé laisse la poise sous son nouveau plafond : elle se régénère.
+}
+
 void UEMBStatsComponent::ReviveWithFraction(float HealthFraction, float StaminaFraction)
 {
 	if (!HasAuthorityOwner() || !IsDead())
@@ -296,7 +316,7 @@ void UEMBStatsComponent::ReviveWithFraction(float HealthFraction, float StaminaF
 
 	Health = FMath::Max(1.f, GetMaxHealth() * HealthRatio); // Jamais 0 : ce serait rester mort.
 	Stamina = GetMaxStamina() * StaminaRatio;
-	Poise = MaxPoise;
+	Poise = GetMaxPoise();
 	SyncReplicatedPoise();
 
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
@@ -334,12 +354,12 @@ void UEMBStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 	}
 
-	if (Poise < MaxPoise)
+	if (Poise < GetMaxPoise())
 	{
 		bNeedsMoreTicks = true;
 		if (Now >= PoiseRegenResumeTime)
 		{
-			Poise = FMath::Min(MaxPoise, Poise + PoiseRegenRate * DeltaTime);
+			Poise = FMath::Min(GetMaxPoise(), Poise + PoiseRegenRate * DeltaTime);
 			SyncReplicatedPoise();
 			BroadcastAttribute(EEMBStatType::Poise);
 		}
@@ -368,6 +388,7 @@ void UEMBStatsComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	// Multiplicateurs de survie : la vie max se voit de tous (barre de groupe), l'endurance max du propriétaire seul.
 	DOREPLIFETIME(UEMBStatsComponent, HealthMaxMultiplier);
 	DOREPLIFETIME_CONDITION(UEMBStatsComponent, StaminaMaxMultiplier, COND_OwnerOnly);
+	DOREPLIFETIME(UEMBStatsComponent, EquipmentPoiseBonus);
 
 	// Maxima d'endurance et de poise fixés par les valeurs par défaut : envoyés une seule fois.
 	DOREPLIFETIME_CONDITION(UEMBStatsComponent, MaxStamina, COND_InitialOnly);
@@ -398,4 +419,5 @@ void UEMBStatsComponent::OnRep_MaxMultipliers()
 {
 	BroadcastAttribute(EEMBStatType::Health);
 	BroadcastAttribute(EEMBStatType::Stamina);
+	BroadcastAttribute(EEMBStatType::Poise);
 }

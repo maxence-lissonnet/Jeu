@@ -16,6 +16,8 @@ class UEMBCombatComponent;
 class UEMBInventoryComponent;
 class UEMBStatsComponent;
 class UEMBSurvivalComponent;
+class UEMBEquipmentComponent;
+class UEMBCraftingComponent;
 class UInputAction;
 class UInputMappingContext;
 class USpringArmComponent;
@@ -67,6 +69,8 @@ public:
 	FORCEINLINE UEMBInventoryComponent* GetInventoryComponent() const { return Inventory; }
 	FORCEINLINE UEMBBuildingComponent* GetBuildingComponent() const { return Building; }
 	FORCEINLINE UEMBSurvivalComponent* GetSurvivalComponent() const { return Survival; }
+	FORCEINLINE UEMBEquipmentComponent* GetEquipmentComponent() const { return Equipment; }
+	FORCEINLINE UEMBCraftingComponent* GetCraftingComponent() const { return Crafting; }
 
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Movement")
 	bool IsSprinting() const;
@@ -232,6 +236,12 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEMBSurvivalComponent> Survival;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEMBEquipmentComponent> Equipment;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEMBCraftingComponent> Crafting;
+
 	// Callbacks Enhanced Input
 	void OnMove(const FInputActionValue& Value);
 	void OnLook(const FInputActionValue& Value);
@@ -270,6 +280,10 @@ private:
 	UFUNCTION()
 	void HandleInventoryChanged(FName ResourceId, int32 NewCount);
 	void UpdateEncumbrance();
+
+	/** Équipement ou sac d'objets modifié : le poids total change, donc la roulade aussi. */
+	UFUNCTION()
+	void HandleEquipmentChanged();
 
 	/** Voie unique de confirmation de pose (attaque légère ou touche dédiée), avec anti-rebond. */
 	void TryConfirmPlacement();

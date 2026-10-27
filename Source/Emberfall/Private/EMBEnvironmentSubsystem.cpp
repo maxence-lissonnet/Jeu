@@ -21,6 +21,7 @@ void UEMBEnvironmentSubsystem::Deinitialize()
 	HeatSources.Reset();
 	Purifiers.Reset();
 	Volumes.Reset();
+	BiomeWeather.Reset();
 	Super::Deinitialize();
 }
 
@@ -54,14 +55,64 @@ float UEMBEnvironmentSubsystem::GetAmbientTemperatureAt(const FVector& Location)
 	{
 		Temperature += EMBSurvivalDefaults::NightTemperatureOffsetC;
 	}
-	return Temperature + WeatherTemperatureOffsetC;
+	// Météo globale (setter historique) + météo du biome (poussée par UEMBWeatherSubsystem).
+	const FName BiomeId = Volume ? Volume->BiomeId : EMBWeather::DefaultBiomeId();
+	return Temperature + WeatherTemperatureOffsetC + GetBiomeWeather(BiomeId).TemperatureOffsetC;
+}
+
+FName UEMBEnvironmentSubsystem::GetBiomeIdAt(const FVector& Location) const
+{
+	const AEMBEnvironmentVolume* Volume = FindBestVolumeAt(Location);
+	return (Volume && !Volume->BiomeId.IsNone()) ? Volume->BiomeId : EMBWeather::DefaultBiomeId();
+}
+
+UEMBEnvironmentSubsystem::FBiomeWeather UEMBEnvironmentSubsystem::GetBiomeWeather(FName BiomeId) const
+{
+	// Repli sur le biome par défaut : un volume au BiomeId absent de DT_Weather subit la météo « Temperate ».
+	if (const FBiomeWeather* Found = BiomeWeather.Find(BiomeId))
+	{
+		return *Found;
+	}
+	if (const FBiomeWeather* Fallback = BiomeWeather.Find(EMBWeather::DefaultBiomeId()))
+	{
+		return *Fallback;
+	}
+	return FBiomeWeather();
+}
+
+void UEMBEnvironmentSubsystem::SetBiomeWeather(FName BiomeId, float TemperatureOffsetC, float CorruptionMultiplier)
+{
+	if (BiomeId.IsNone() || !FMath::IsFinite(TemperatureOffsetC) || !FMath::IsFinite(CorruptionMultiplier))
+	{
+		return;
+	}
+
+	FBiomeWeather Updated;
+	Updated.TemperatureOffsetC = FMath::Clamp(TemperatureOffsetC, -EMBSurvivalDefaults::MaxWeatherOffsetC, EMBSurvivalDefaults::MaxWeatherOffsetC);
+	Updated.CorruptionMultiplier = FMath::Clamp(CorruptionMultiplier, 0.f, 10.f);
+
+	const FBiomeWeather* Existing = BiomeWeather.Find(BiomeId);
+	// Le mélange d'une transition change ces valeurs chaque seconde : on ne prévient qu'au changement visible
+	// (1 °C ou 0,1 de multiplicateur), pas à chaque mise à jour.
+	const bool bVisibleChange = !Existing
+		|| FMath::RoundToInt(Existing->TemperatureOffsetC) != FMath::RoundToInt(Updated.TemperatureOffsetC)
+		|| FMath::RoundToInt(Existing->CorruptionMultiplier * 10.f) != FMath::RoundToInt(Updated.CorruptionMultiplier * 10.f);
+
+	BiomeWeather.Add(BiomeId, Updated);
+	if (bVisibleChange)
+	{
+		BroadcastChanged();
+	}
 }
 
 float UEMBEnvironmentSubsystem::GetCorruptionRateAt(const FVector& Location) const
 {
 	const AEMBEnvironmentVolume* Volume = FindBestVolumeAt(Location);
 	const float Rate = Volume ? FMath::Max(0.f, Volume->CorruptionRatePerSecond) : EMBSurvivalDefaults::DefaultCorruptionRatePerSecond;
-	return IsNight() ? Rate * EMBSurvivalDefaults::NightCorruptionMultiplier : Rate;
+	// Brume corrompue du biome (x1,5) et nuit (x2) se multiplient.
+	const FName BiomeId = Volume ? Volume->BiomeId : EMBWeather::DefaultBiomeId();
+	const float WeatherMultiplier = GetBiomeWeather(BiomeId).CorruptionMultiplier;
+	return (IsNight() ? Rate * EMBSurvivalDefaults::NightCorruptionMultiplier : Rate) * WeatherMultiplier;
 }
 
 bool UEMBEnvironmentSubsystem::IsNight() const

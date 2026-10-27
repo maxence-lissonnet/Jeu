@@ -139,7 +139,9 @@ float UEMBInventoryComponent::GetUnitWeight(FName ResourceId)
 		{ TEXT("HealingFlask"), 0.3f },
 		{ TEXT("Antidote"), 0.2f },
 		{ TEXT("CorruptionTonic"), 0.3f },
-		{ TEXT("FireResistOil"), 0.3f }
+		{ TEXT("FireResistOil"), 0.3f },
+		// Eau brute (v1.4, référentiel 13) : versée par les sources d'eau, consommée par la recette BoiledWater.
+		{ TEXT("Water"), 0.5f }
 	};
 	const float* Weight = UnitWeights.Find(ResourceId);
 	return Weight ? *Weight : 0.f;

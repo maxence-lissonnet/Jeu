@@ -44,7 +44,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxStamina() const;
 	/** Serveur : valeur exacte. Client : valeur répliquée, mise à jour par pas d'au moins 1 point (économie de bande passante). */
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetPoise() const;
-	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxPoise() const { return MaxPoise; }
+	/** Maximum EFFECTIF : valeur de base + bonus d'équipement (armures). */
+	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxPoise() const { return MaxPoise + EquipmentPoiseBonus; }
 
 	/** Vie restante entre 0 et 1. */
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetHealthPercent() const;
@@ -85,6 +86,12 @@ public:
 	 * Serveur. Fait sortir de l'état mort : vie et endurance à la fraction demandée de leur maximum effectif
 	 * (la vie reste >= 1), poise pleine. Sans effet si l'acteur n'est pas mort.
 	 */
+	/**
+	 * Serveur, poussé par l'équipement. Bonus de poise des armures, ajouté à MaxPoise. La poise courante est
+	 * plafonnée au nouveau maximum (jamais relevée : pas de poise gratuite en changeant d'armure).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Emberfall|Stats") void SetEquipmentPoiseBonus(float Bonus);
+
 	UFUNCTION(BlueprintCallable, Category = "Emberfall|Stats") void ReviveWithFraction(float HealthFraction, float StaminaFraction);
 
 	/**
@@ -174,6 +181,9 @@ private:
 	/** Multiplicateurs de maxima venant de la survie. Vie : à tous (effets visuels) ; endurance : propriétaire. */
 	UPROPERTY(ReplicatedUsing = OnRep_MaxMultipliers) float HealthMaxMultiplier = 1.f;
 	UPROPERTY(ReplicatedUsing = OnRep_MaxMultipliers) float StaminaMaxMultiplier = 1.f;
+
+	/** Bonus de poise maximale venant de l'équipement. Répliqué : l'interface de posture lit le maximum effectif. */
+	UPROPERTY(ReplicatedUsing = OnRep_MaxMultipliers) float EquipmentPoiseBonus = 0.f;
 
 	/** Instants (temps monde serveur) de reprise de la régénération. */
 	double StaminaRegenResumeTime = 0.0;

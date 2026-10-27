@@ -249,6 +249,10 @@ private:
 	/** Instant (secondes du monde) où la sauvegarde a commencé à être reportée à cause d'un boss. */
 	double DeferredSinceTime = 0.0;
 
+	/** Bloc météo du fichier chargé, réécrit si UEMBWeatherSubsystem::ExportSaveData échoue (état pas prêt). */
+	FEMBWeatherSaveData RetainedWeather;
+	bool bHasRetainedWeather = false;
+
 	/** Un fichier illisible (version inconnue...) existe : aucune écriture, sous peine de le détruire. */
 	bool bBlockedByUnusableSave = false;
 

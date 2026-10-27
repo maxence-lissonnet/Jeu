@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "EMBSurvivalTypes.h"
+#include "EMBWeatherTypes.h"
 #include "EMBEnvironmentSubsystem.generated.h"
 
 class AActor;
@@ -13,7 +14,7 @@ class AEMBEnvironmentVolume;
 /**
  * Diffusé quand l'environnement change de façon structurelle : passage jour/nuit, décalage météo modifié,
  * volume de biome, source de chaleur ou purificateur ajouté/retiré. PAS à chaque mise à jour de l'heure
- * (un futur cycle jour/nuit appelle SetTimeOfDay à chaque frame : la diffusion serait un déluge).
+ * (le sous-système météo appelle SetTimeOfDay chaque seconde : seule la bascule jour/nuit est diffusée).
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FEMBOnEnvironmentChanged);
 
@@ -21,8 +22,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FEMBOnEnvironmentChanged);
  * Environnement du monde pour la survie (contrat 10.4) : température ambiante, nuit, taux de Corruption,
  * sources de chaleur et purificateurs.
  *
- * Alimenté par les AEMBEnvironmentVolume (biomes) et par des setters qu'un futur système météo / jour-nuit
- * appellera (SetTimeOfDay, SetWeatherTemperatureOffset). Aucun système météo n'est codé ici.
+ * Alimenté par les AEMBEnvironmentVolume (biomes) et par UEMBWeatherSubsystem, qui pousse chaque seconde sur
+ * chaque machine l'heure (SetTimeOfDay) et la météo de chaque biome (SetBiomeWeather : décalage de température,
+ * multiplicateur de Corruption). SetWeatherTemperatureOffset reste un décalage global additionnel.
  *
  * Réseau : sous-système local à chaque machine, sans réplication. Les consommateurs (UEMBSurvivalComponent)
  * l'interrogent côté serveur ; l'heure et la météo doivent y être poussées par le serveur (et par les
@@ -69,7 +71,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Environment")
 	float GetWeatherTemperatureOffset() const { return WeatherTemperatureOffsetC; }
 
-	// ---------------------------------------------------------------- Setters (futur système météo / jour-nuit)
+	// ---------------------------------------------------------------- Setters (appelés par le sous-système météo / jour-nuit)
 
 	/** Heure du jour en heures (0-24, ramenée dans l'intervalle ; défaut 12 h). Valeur non finie ignorée. */
 	UFUNCTION(BlueprintCallable, Category = "Emberfall|Environment")
@@ -94,6 +96,20 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Emberfall|Environment")
 	void UnregisterPurifier(AActor* Source);
+
+	// ---------------------------------------------------------------- Météo par biome (v1.4, poussée par UEMBWeatherSubsystem)
+
+	/**
+	 * Décalage de température (°C) et multiplicateur du taux de Corruption de zone propres à un biome (la météo
+	 * de ce biome). Valeurs non finies ignorées, décalage borné à ±60, multiplicateur à [0, 10].
+	 * Diffuse OnEnvironmentChanged seulement si l'arrondi (1 °C, 0,1) change : pas à chaque seconde d'une transition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Emberfall|Environment")
+	void SetBiomeWeather(FName BiomeId, float TemperatureOffsetC, float CorruptionMultiplier);
+
+	/** Biome au point donné : BiomeId du volume de plus haute priorité, sinon « Temperate ». */
+	UFUNCTION(BlueprintPure, Category = "Emberfall|Environment")
+	FName GetBiomeIdAt(const FVector& Location) const;
 
 	// ---------------------------------------------------------------- Volumes de biome
 
@@ -125,7 +141,20 @@ private:
 	/** Retire les entrées de l'acteur (et les invalides). Retourne true si la liste a changé. */
 	static bool RemoveSource(TArray<FRadiusSource>& Sources, const AActor* Source);
 
+	/** Effet de la météo d'un biome. Neutre par défaut. */
+	struct FBiomeWeather
+	{
+		float TemperatureOffsetC = 0.f;
+		float CorruptionMultiplier = 1.f;
+	};
+
+	/** Météo du biome (repli : « Temperate », sinon neutre). */
+	FBiomeWeather GetBiomeWeather(FName BiomeId) const;
+
 	void BroadcastChanged();
+
+	/** Météo par biome, mise à jour par le sous-système météo (au plus quelques entrées). */
+	TMap<FName, FBiomeWeather> BiomeWeather;
 
 	float TimeOfDayHours = EMBSurvivalDefaults::DefaultTimeOfDayHours;
 	float WeatherTemperatureOffsetC = 0.f;

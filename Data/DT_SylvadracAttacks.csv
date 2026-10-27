@@ -1,0 +1,4 @@
+---,AttackTag,Kind,AllowedPhases,MinRange,MaxRange,HalfAngleDeg,bRearOnly,RearMinAngleDeg,TelegraphTime,DodgeWindowStart,DodgeWindowEnd,DodgeWindow2Start,DodgeWindow2End,HitTimes,Damage,PoiseDamage,StaminaDamage,EffectRadius,KnockbackDistance,ActiveDuration,ImpactCount,DamageType,bParryable,bUnblockable,bAppliesBurn,bScripted,BaseWeight,PhaseWeights,Cooldown,Montage,BreathMode,VFX
+Bite,"(TagName=""Attack.Sylvadrac.Bite"")",Melee,"(1)",0,900,45,False,110,1.0,0.85,1.1,0,0,"(1.1)",220,60,0,0,0,0,0,Physical,True,False,False,False,35,"(1,1,1)",3,,Cone,
+LowDive,"(TagName=""Attack.Sylvadrac.LowDive"")",Melee,"(1)",900,2500,25,False,110,1.2,1.7,1.95,0,0,"(1.9)",300,100,0,350,0,0.7,0,Physical,False,False,False,False,25,"(1,1,1)",9,,Cone,
+PoisonCloud,"(TagName=""Attack.Sylvadrac.PoisonCloud"")",Area,"(1)",600,2500,180,False,110,1.4,0,0,0,0,"(1.4)",0,0,0,450,0,8,0,Physical,False,True,False,False,25,"(1,1,1)",14,,Cone,

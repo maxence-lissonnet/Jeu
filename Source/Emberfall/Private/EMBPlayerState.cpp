@@ -12,6 +12,27 @@ AEMBPlayerState::AEMBPlayerState()
 	SetNetUpdateFrequency(10.f);
 }
 
+void AEMBPlayerState::StorePendingLoadout(const FEMBEquipmentSaveData& Equipment, const FEMBCraftingSaveData& Crafting)
+{
+	PendingEquipment = Equipment;
+	PendingCrafting = Crafting;
+	bHasPendingLoadout = true;
+}
+
+bool AEMBPlayerState::ConsumePendingLoadout(FEMBEquipmentSaveData& OutEquipment, FEMBCraftingSaveData& OutCrafting)
+{
+	if (!bHasPendingLoadout)
+	{
+		return false;
+	}
+	OutEquipment = PendingEquipment;
+	OutCrafting = PendingCrafting;
+	PendingEquipment = FEMBEquipmentSaveData();
+	PendingCrafting = FEMBCraftingSaveData();
+	bHasPendingLoadout = false;
+	return true;
+}
+
 void AEMBPlayerState::CopyProperties(APlayerState* NewPlayerState)
 {
 	Super::CopyProperties(NewPlayerState);

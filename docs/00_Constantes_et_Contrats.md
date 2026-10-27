@@ -377,7 +377,7 @@ UEMBStatsComponent::RestoreFromSave(float Health, float Stamina);               
 
 | Constante | Valeur |
 |---|---|
-| `SaveFormatVersion` | **2** depuis la v1.3 (1 = v1.2) ; incrémenté à chaque changement de format ; migration par étapes N → N+1 ; résultat `Ok` / `TooRecent` (bloque les écritures) / `Invalid` (fichier ignoré sans bloquer) |
+| `SaveFormatVersion` | **3** depuis la v1.4 (ajouts : équipement, fabrication, nœuds de ressource épuisés, météo et heure, chacun avec un drapeau `bHas…State`) ; 2 en v1.3 (1 = v1.2) ; incrémenté à chaque changement de format ; migration par étapes N → N+1 ; résultat `Ok` / `TooRecent` (bloque les écritures) / `Invalid` (fichier ignoré sans bloquer) |
 | Ajouts v2 | joueur : survie (`FEMBSurvivalSaveData`, importée seulement si `bHasSurvivalState`), `BoundRespawnPieceSaveId` ; monde : sacs de mort (propriétaire stable, transform, contenu) ; boss : itération sur `AEMBBossBase` |
 | Piège de sérialisation | une valeur égale au défaut n'est pas écrite : les champs sauvegardés ont des défauts neutres (0) et non des constantes d'équilibrage |
 | Slots | 3 mondes `EMB_World_0` à `EMB_World_2` ; chaque monde écrit en alternance `_A` / `_B` et charge le plus récent valide (une écriture interrompue ne détruit jamais la précédente) |
@@ -555,3 +555,133 @@ PV 24 000 ; posture 700, régénération 50/s après 2,5 s, étourdi 3 s ; rési
 | BlackHalo | 2-3 | 0-600 | 1,5 | sphère rayon 600 | 250 + 20 Corruption | Non | 15 | 15 |
 | DeadStarFall | 3 | tout | 0,8 avant chaque plongeon | 3 plongeons espacés de 0,9 s, rayon 400 | 220 / 80 chacun | Non | 20 | 20 ; **vulnérable 4 s** ensuite |
 Arène `AEMBSeraphArena` : 3 cloches ; frapper une cloche quand Nyxariel vole l'étourdit 2 s (une fois par cloche).
+
+---
+
+## 12. v1.4 — attribution et signatures transverses
+
+| Propriétaire | Fichiers v1.4 |
+|---|---|
+| Dev F — objets, équipement, artisanat | `EMBItemTypes.h`, `EMBEquipmentComponent.*`, `EMBCraftingComponent.*`, `Data/DT_Items.csv`, `Data/DT_Recipes.csv` |
+| Dev G — récolte | `EMBResourceNodeTypes.h`, `EMBResourceNode.*`, `EMBResourceNodeSubsystem.*`, `EMBFallingTree.*`, `Data/DT_ResourceNodes.csv` |
+| Dev D — météo, jour/nuit | `EMBWeatherTypes.h`, `EMBWeatherSubsystem.*`, `EMBWorldStateReplicator.*`, `EMBSkyController.*`, `Data/DT_Weather.csv`, ajouts dans `EMBEnvironmentSubsystem.*` / `EMBEnvironmentVolume.*` |
+| Dev H — bestiaire | `EMBCreatureTypes.h`, `EMBCreatureBase.*`, `EMBCreatureAIController.*`, tâches/services BT `BTTask_EMBCreature*` / `BTService_EMBCreature*`, `EMBTerritorialDragon.*`, `EMBCreatureSpawner.*`, `EMBCreatureSignificance.*`, `Data/DT_Creatures.csv` |
+| Dev A — branchements | `EMBCombatComponent.*`, `EMBCombatTypes.h`, `EMBStatsComponent.*`, `EMBPlayerCharacter.*`, `Emberfall.Build.cs`, `Emberfall.uproject`, `Config/DefaultEngine.ini` |
+| Dev B — inventaire, sauvegarde v3 | `EMBInventoryComponent.*`, `EMBSaveTypes.h`, `EMBSaveGame.*`, `EMBSaveSubsystem.*`, `Config/DefaultGame.ini` (sections de ses classes) |
+
+Signatures figées (les autres membres sont libres) :
+```cpp
+// EMBCombatTypes.h (Dev A) — valeurs par défaut = comportement actuel (épée de référence + bouclier)
+USTRUCT(BlueprintType) struct FEMBEquipmentCombatStats {
+    float WeaponBaseDamage = 80.f; EEMBDamageType WeaponDamageType = EEMBDamageType::Physical;
+    float AttackStaminaMultiplier = 1.f; float PoiseDamageMultiplier = 1.f;
+    float GuardPhysical = 0.85f; float GuardElemental = 0.50f; float GuardCorruption = 0.30f;
+    float ArmorPhysicalReduction = 0.f; float ArmorFireReduction = 0.f; };      // armures : réductions plafonnées à 0,6
+void UEMBCombatComponent::SetEquipmentCombatStats(const FEMBEquipmentCombatStats& Stats);  // serveur, répliqué au propriétaire si l'UI en a besoin
+// délégué serveur : OnHitLandedServer(AActor* Target, EEMBHitResult Result) — émis sur le serveur quand un coup de CE combattant est résolu
+void UEMBStatsComponent::SetEquipmentPoiseBonus(float Bonus);                   // serveur ; s'ajoute à MaxPoise
+
+// UEMBEquipmentComponent (Dev F, sur le personnage)
+USTRUCT(BlueprintType) struct FEMBEquippedToolInfo { EEMBToolType ToolType = EEMBToolType::None; int32 Tier = 0; float HarvestDamage = 5.f; bool bBroken = false; };
+FEMBEquippedToolInfo GetEquippedTool() const;   // outil ou arme en main droite ; mains nues = None, tier 0, 5 dégâts
+void NotifyToolUsed();                           // serveur : −1 durabilité de l'objet en main droite
+float GetTotalWeight() const;                    // sac d'objets + objets équipés
+bool AddItemInstance(FName ItemId, float Durability = -1.f);   // serveur ; -1 = neuve ; false si sac plein
+void RequestEquip(int32 BagIndex, FName ItemId); void RequestUnequip(EEMBEquipSlot Slot);   // v1.4 après revue : ItemId vérifié par le serveur ; seulement en état Idle
+void ExportSaveData(FEMBEquipmentSaveData& Out) const; void ImportSaveData(const FEMBEquipmentSaveData& In);
+// UEMBCraftingComponent (Dev F, sur le personnage)
+void RequestCraft(FName RecipeId, int32 Count); void RequestCancel(int32 QueueIndex, FName RecipeId);
+void ExportSaveData(FEMBCraftingSaveData& Out) const; void ImportSaveData(const FEMBCraftingSaveData& In);
+// UEMBResourceNodeSubsystem (Dev G, UWorldSubsystem serveur)
+AEMBResourceNode* SpawnDynamicNode(FName NodeRowId, const FTransform& Transform, float LifeSpanSeconds); // carcasses de créatures
+void ExportSaveData(FEMBResourceNodesSaveData& Out) const; void ImportSaveData(const FEMBResourceNodesSaveData& In);
+// UEMBWeatherSubsystem (Dev D, UWorldSubsystem, autorité serveur, état répliqué par AEMBWorldStateReplicator)
+float GetTimeOfDayHours() const; bool IsNight() const;
+EEMBWeatherState GetWeatherAt(const FVector& Location) const; float GetVisibilityMultiplierAt(const FVector& Location) const;
+bool ExportSaveData(FEMBWeatherSaveData& Out) const; void ImportSaveData(const FEMBWeatherSaveData& In);   // false si l’état n’est pas prêt (la sauvegarde garde alors le bloc précédent)
+```
+Les structures de sauvegarde (`FEMB*SaveData`) sont déclarées par leur propriétaire, champs `SaveGame`, défauts neutres (0 / vide). La sauvegarde passe en **format v3** (Dev B).
+
+## 13. Récolte (v1.4)
+
+| Constante | Valeur |
+|---|---|
+| Types d'outil | `None` (mains nues), `Axe` (arbres), `Pickaxe` (rochers, filons), `Knife` (carcasses) |
+| Dégâts de récolte par coup | mains nues 5 ; T1 25 ; T2 40 ; T3 55 ; T4 75 (colonne `HarvestDamage` des outils) |
+| Rendement selon le tier (GDD §4.2) | T1 ×1,0 ; T2 ×1,6 ; T3 ×2,2 ; T4 ×3,0 ; outil de tier ≥ `MinToolTier` mais < `FullYieldTier` : ×0,3 ; × passif `HarvestYield` (1 + somme) |
+| Mauvais outil ou tier < `MinToolTier` | coup ignoré (`Ignored`) avec retour d'interface |
+| Distribution | ressources versées au fil des coups au prorata des dégâts, reste versé à l'épuisement ; arrondi à l'unité inférieure par coup |
+| Durabilité | −1 par coup de récolte réussi |
+| XP de récolte | colonne `XPOnDepleted`, versée au joueur qui épuise le nœud (`AddXP`, serveur) |
+| Arbre épuisé | craquement 2,0 s, puis chute physique (acteur de remplacement `AEMBFallingTree`, direction opposée au dernier coup) : 150 dégâts / 60 poise aux pawns écrasés, sommeil physique et disparition après 10 s ; 3 chutes simultanées par joueur, 12 au total (au-delà : disparition directe) |
+| Rocher épuisé | fracture optionnelle (classe `GeometryCollection` en soft class, débris 15 s), sinon disparition avec effet |
+| Réapparition | nœud caché et sans collision pendant `RespawnSeconds` ; reportée de 30 s si un joueur ou une pièce est à moins de 300 cm ; sauvegardée (identifiant stable `NodeId` = FGuid du nœud placé) ; les carcasses dynamiques ne sont pas sauvegardées (durée de vie 600 s) |
+| Distance serveur | coup valide seulement si l'instigateur est à ≤ 400 cm du nœud |
+| Argent-lune | filon visible et récoltable seulement la nuit (rafraîchi sur `OnEnvironmentChanged`, contrôle de repli 60 s) |
+| Retour d’interface | un coup ignoré renvoie `Client_ConfirmHit(…, Ignored)` ; la raison est donnée côté client par `AEMBResourceNode::GetRejectReason` (outil inadapté, tier insuffisant, nuit, épuisé, trop loin) |
+| Usure | une seule fois par coup, par l’équipement sur `OnHitLandedServer` (le nœud n’appelle pas `NotifyToolUsed`) |
+
+| Nœud (`DT_ResourceNodes`) | PV | Outil / MinTier / FullYieldTier | Ressources (rendement de base) | Réapparition | XP |
+|---|---|---|---|---|---|
+| Bush | 50 | None / 0 / 0 | Fiber 6, Berries 2, Wood 2 (branches : amorce le bois avant la première hache) | 600 s | 3 |
+| FlintPile | 60 | None / 0 / 0 | Flint 5 | 900 s | 3 |
+| WaterSource | 1 000 000 (inépuisable) | None / 0 / 0 | Water 1 par coup | — | 0 |
+| Pine | 300 | Axe / 1 / 1 | Wood 12, Fiber 2 | 2 880 s | 15 |
+| Oak | 600 | Axe / 1 / 1 | Wood 25 | 2 880 s | 25 |
+| AshTree | 1 200 | Axe / 2 / 2 | Wood 40 | 2 880 s | 40 |
+| Boulder | 400 | Pickaxe / 1 / 1 | Stone 20, Flint 2 | 2 880 s | 20 |
+| IronVein | 800 | Pickaxe / 1 / 2 | IronOre 15 | 5 760 s | 40 |
+| ObsidianVein | 1 000 | Pickaxe / 3 / 3 | Obsidian 10 | 5 760 s | 80 |
+| MoonSilverVein | 900 | Pickaxe / 3 / 3 | MoonSilver 6 | 5 760 s | 90 |
+| AncientDragonCarcass | 1 500 | Knife / 1 / 4 | DragonScale 4, DragonBone 2 | 5 760 s | 120 |
+| GhoulRemains (dynamique) | 60 | Knife / 1 / 1 | Fiber 3, Flint 1 | — | 5 |
+| RockWyvernCarcass (dynamique) | 300 | Knife / 1 / 1 | DragonScale 2, RawMeat 3 | — | 30 |
+| SylvadracCarcass (dynamique) | 3 000 | Knife / 2 / 4 | EmberHeart 1, DragonBone 4, DragonScale 8 | — | 300 |
+Nouvelle ressource `Water` (poids 0,5) ; la recette `BoiledWater` en consomme 1 au feu de camp.
+
+## 14. Objets, équipement, artisanat (v1.4)
+
+| Constante | Valeur |
+|---|---|
+| Emplacements | `MainHand` (arme ou outil), `OffHand` (bouclier), `Head`, `Chest`, `Hands`, `Legs` |
+| Stockage | ressources et consommables : piles de l'inventaire existant ; objets durables (outils, armes, boucliers, armures) : **sac d'objets** de `UEMBEquipmentComponent`, 40 instances max, durabilité par instance |
+| Mains nues | dégâts 20, pas de bouclier : garde physique 0,50 / élémentaire 0,25 / corruption 0,10 |
+| Bouclier | ses colonnes remplacent les valeurs de garde (bois 0,70/0,40/0,20 ; fer 0,85/0,50/0,30 ; draconique 0,90/0,65/0,35) |
+| Armure | réduction physique et feu = somme des pièces, plafond 0,60 (appliquée après la garde) ; poise bonus = somme ; isolation (°C) = somme → `UEMBSurvivalComponent::SetInsulation` |
+| Durabilité | arme/outil −1 par coup porté (`OnHitLandedServer`) ou par coup de récolte ; armure −1 par coup reçu hors dégâts continus, sur toutes les pièces ; bouclier −1 par coup bloqué ; à 0 : objet **cassé**, reste équipé sans effet ; réparation = recette de réparation à l'atelier d'origine, 25 % du coût (arrondi supérieur) |
+| Poids | poids du sac d'objets + objets équipés ajoutés à l'encombrement (roulade, §4.2) |
+| Fabrication | file serveur par joueur, 10 entrées max ; ingrédients consommés à la mise en file, remboursés à l'annulation ; un atelier requis (`RequiredStation` = ligne `DT_BuildPieces` : `Workbench`, `Forge`, `Smelter`, `Campfire`, `DraconicForge`) doit être construit à ≤ 600 cm, sinon la file se met en pause ; `RequiredGlyph` vérifié à la mise en file ; sac plein → mise en file refusée ; XP de fabrication = colonne `XP` |
+| Départ | aucun objet ; les outils de silex se fabriquent à la main **sans glyphe** (le niveau 1 ne donne aucun point) |
+| Réparation | 0 XP (évite l’exploit « un coup + une réparation ») |
+| Chaîne des métaux (arbitrage v1.4 après revue d’intégration) | Fonderie : 60 Stone + 10 **IronOre** (et non des lingots, sinon impossible à construire) ; lingot de fer : 2 IronOre + 1 Wood ; lingot d’acier noir : 2 IronIngot + **3 Wood** (charbon de bois, à la place de l’obsidienne qui exige déjà une pioche d’acier noir) |
+| Réapparition | équipement et file de fabrication conservés (mis en attente sur le PlayerState, réimportés à la possession) ; seules les ressources vont dans le sac |
+| Armure et dégâts continus | seule l’armure de feu réduit les dégâts continus (lave, brûlure) ; jamais faim, froid, poison |
+
+Armes de référence (`DT_Items`) : massue de bois 45 ; hache/pioche/couteau de silex 30 ; épée de fer 80 (valeur de référence du §4) ; espadon d'acier noir 110 (endurance ×1,25, poise ×1,4) ; lame de croc draconique 140 (feu). Armures : peaux 3 %/pièce + 2 °C ; fourrures 2 % + 6 °C (capuche) / 10 °C (manteau) ; fer 6 %/pièce, poise +5/pièce ; écailles draconiques 8 % physique + 10 % feu/pièce, poise +6.
+
+## 15. Météo et cycle jour/nuit (v1.4)
+
+| Constante | Valeur |
+|---|---|
+| Journée | 48 min réelles : jour 06 h → 20 h en 32 min, nuit 20 h → 06 h en 16 min ; départ d'un monde neuf : 08 h |
+| États | `Clear`, `Overcast`, `Rain`, `Storm`, `Fog`, `Snow`, `CorruptedMist`, `AshStorm` |
+| Par biome | chaque biome (`BiomeId` du volume d'environnement, défaut `Temperate`) a son propre état ; durée tirée entre 240 et 600 s ; transition 90 à 180 s (mélange linéaire) ; probabilités de transition par biome dans `DT_Weather.csv` |
+| Décalage de température | Clear 0 (+2 le jour) ; Overcast −2 ; Rain −4 ; Storm −6 ; Fog −1 ; Snow −10 ; CorruptedMist −3 ; AshStorm +6 |
+| Visibilité (perception des créatures et du joueur) | Fog ×0,6 ; Storm ×0,7 ; Rain ×0,85 ; AshStorm ×0,5 ; CorruptedMist ×0,6 ; sinon ×1,0 |
+| Corruption | `CorruptedMist` : taux de zone ×1,5 ; la nuit ×2 (déjà en place) |
+| Réplication | `AEMBWorldStateReplicator` (toujours pertinent) : heure de référence serveur + vitesses, états de biome ; les clients calculent l'heure localement (pas de réplication par image) |
+| Ciel | `AEMBSkyController` (client) : pilote des acteurs du niveau référencés (soleil `DirectionalLight`, `SkyLight`, `SkyAtmosphere`, `ExponentialHeightFog`, `VolumetricCloud`) selon l'heure et la météo au point de vue local, 10 Hz ; aucun asset obligatoire |
+| Non codé | extinction des feux non abrités sous la pluie, ralentissement dans la neige, attraction de Tempestar par l'orage |
+
+## 16. Bestiaire (v1.4)
+
+| Constante | Valeur |
+|---|---|
+| Archétypes | Goule de cendre (corrompue), Wyverneau des rocs (dracosaure mineur), Sylvadrac (dragon territorial, mini-boss : dérive de `AEMBBossBase`) |
+| Goule de cendre | PV 180, dégâts 35, poise 20, groupes de 2 à 4, vitesse 450 ; fuit un feu (source de chaleur ≥ 10 °C à moins de 600 cm) ; XP 40 ; carcasse `GhoulRemains` |
+| Wyverneau des rocs | PV 900, morsure 60, piqué bas 80, poise 60, vol bas ; fuit à 30 % PV ; XP 250 ; carcasse `RockWyvernCarcass` |
+| Sylvadrac | PV 25 000, posture 800, poison (dégâts continus 20/s, nuage persistant 8 s), morsure 220, piqué bas 300 ; territoire 30 000 cm autour du nid : rugissement à l'entrée, attaque après 20 s de présence, retour au nid et régénération hors territoire ; XP 20 000 aux contributeurs (dégâts > 0 dans les 30 s, à ≤ 10 000 cm) ; rencontre (échelle coop, report des sauvegardes) seulement en état agressif ; carcasse `SylvadracCarcass` ; **raids de bases non codés** ; réapparaît 3 journées de jeu (144 min) après sa mort (non sauvegardé en v1.4) |
+| IA commune | patrouille autour du point d'apparition (1 500 cm), perception (vue 2 500 cm × visibilité météo, ouïe 1 200 cm), poursuite, attaque (sélection pondérée sur la table d'attaques), abandon de poursuite au-delà de 4 000 cm du point d'apparition, fuite selon l'archétype |
+| Spawners | `AEMBCreatureSpawner` : archétype, vivants max, intervalle de réapparition ; n'apparaît que si un joueur est à ≤ 8 000 cm et aucun à < 2 500 cm du point ; poids ×2 la nuit pour les corrompus ; budget serveur 40 créatures vivantes |
+| Significance | plugin `SignificanceManager` : significance selon la distance au joueur le plus proche ; < 3 000 cm : IA et animation pleines ; 3 000-8 000 : tick IA 0,25 s, URO ; > 8 000 : IA en pause (BT arrêté), mesh sans tick ; > 15 000 et aucun joueur : créature rendue au spawner |
+| XP des créatures | aux joueurs ayant infligé des dégâts dans les 30 dernières secondes et à ≤ 10 000 cm |

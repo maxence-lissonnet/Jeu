@@ -59,6 +59,7 @@ Dark fantasy **réaliste et matérielle** : pierre humide, fer piqué, cuir craq
 - **États météo** : Clair, Couvert, Pluie, Orage, Brouillard, Neige (biomes froids), Brume corrompue (biome du Marais flétri et la nuit), Tempête de cendres (Caldera).
 - **Transitions** de 90 à 180 s (interpolation des paramètres du ciel, du vent, des matériaux mouillés/enneigés, du brouillard volumétrique).
 - **Effets de gameplay** : la pluie éteint les feux non abrités et rafraîchit (−4 °C) ; l'orage attire Tempestar (dragon territorial) ; la neige ralentit (−10 % de vitesse hors chemins) ; le brouillard réduit la perception des créatures (et du joueur) de 40 %.
+- **État v1.4** : codés : horloge, météo par biome (`DT_Weather`), effets de température, de visibilité (perception des créatures) et de Corruption, ciel piloté (`AEMBSkyController`). Pas encore codés : feux éteints par la pluie, ralentissement dans la neige, attraction de Tempestar.
 
 ### 2.5 Références visuelles (à rassembler en moodboard par le directeur artistique)
 Elden Ring (Caelid, Leyndell en cendres), Dark Souls III (Irithyll, Lothric), Bloodborne (verticalité gothique), A Plague Tale: Requiem (lumière naturelle), peintures de John Martin (apocalypses), Zdzisław Beksiński (Corruption), gravures de Gustave Doré.
@@ -96,25 +97,26 @@ Préparer une expédition (nourriture, fioles, outils, armes) → atteindre un n
 ### 4.1 Ressources
 | Identifiant (code) | Nom | Source | Outil minimal | Poids |
 |---|---|---|---|---|
-| `Wood` | Bois | arbres (Chaos), branches | aucun (branches) / hache de silex | 0,5 |
+| `Wood` | Bois | arbres (Chaos), branches des buissons (2 par buisson) | aucun (branches) / hache de silex | 0,5 |
+| `Water` | Eau | sources (inépuisables) | aucun | 0,5 |
 | `Fiber` | Fibre | buissons, herbes | aucun | 0,1 |
 | `Flint` | Silex | sol rocailleux | aucun | 0,5 |
 | `Stone` | Pierre | rochers fracturables | pioche de silex | 1 |
 | `IronOre` | Minerai de fer | filons (falaises) | pioche de fer… (silex : rendement ×0,3) | 2 |
 | `IronIngot` | Lingot de fer | fonderie | — | 1 |
-| `BlackSteelIngot` | Lingot d'acier noir | fonderie + charbon + savoir | — | 1 |
+| `BlackSteelIngot` | Lingot d’acier noir | fonderie : 2 lingots de fer + 3 bois (charbon de bois) + savoir | — | 1 |
 | `Obsidian` | Obsidienne | coulées de la Caldera, failles | pioche d'acier noir | 1,5 |
 | `MoonSilver` | Argent-lune | filons nocturnes (visibles de nuit seulement) | pioche d'acier noir | 1 |
 | `DragonScale` | Écaille draconique | dracosaures, dragons | couteau de dépeçage | 2 |
 | `DragonBone` | Os draconique | dragons territoriaux, carcasses anciennes | hache d'acier noir | 3 |
 | `EmberHeart` | Cœur-Braise | dragons territoriaux (1 garanti), Vaelthyrax | — | 5 |
 
-**Charge portée** : maximum 300 (v1 : ressources seulement ; l'équipement s'ajoutera). Le ratio de charge règle la roulade (voir §6.4).
+**Charge portée** : maximum 300 ; les ressources et les objets (sac d’objets et équipement porté) comptent. Le ratio de charge règle la roulade (voir §6.4).
 
 ### 4.2 Outils et tiers
 | Tier | Matériau | Outils | Rendement | Débloqué par |
 |---|---|---|---|---|
-| T1 | Silex / bois | hache, pioche, couteau, torche | ×1,0 | glyphe `G_StoneTools` (niv. 1) |
+| T1 | Silex / bois | hache, pioche, couteau | ×1,0 | fabrication à la main, sans glyphe (v1.4) |
 | T2 | Fer | hache, pioche, faucille, marteau de construction | ×1,6, durabilité ×2 | `G_Smelting` (niv. 10) |
 | T3 | Acier noir | outils et pioche « fend-roc » | ×2,2, peut miner Obsidienne et Argent-lune | `G_BlackSteel` (niv. 20, savoir de la Bibliothèque engloutie) |
 | T4 | Draconique | outils de croc et d'os | ×3,0, dépeçage des dragons à 100 % | `G_DragonboneWeapons` (niv. 60, après la Forge draconique) |

@@ -152,6 +152,7 @@ void UEMBCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 
 	DOREPLIFETIME(UEMBCombatComponent, CurrentState);
 	DOREPLIFETIME(UEMBCombatComponent, ComboIndex);
+	DOREPLIFETIME_CONDITION(UEMBCombatComponent, EquipmentStats, COND_OwnerOnly); // Pour l'interface de l'équipement.
 	DOREPLIFETIME(UEMBCombatComponent, bSpawnProtected); // Visible des clients : halo d'invulnérabilité de réapparition.
 }
 
@@ -1266,6 +1267,17 @@ void UEMBCombatComponent::SweepBlade(const FVector& Base, const FVector& Tip, co
 		}
 		if (Result != EEMBHitResult::Ignored)
 		{
+			// Serveur : usure de l'arme et autres réactions (aussi pour un nœud de ressource, qui répond Hit/Killed
+			// par IEMBHitReceiver). Diffusé avant le retour cosmétique au client.
+			OnHitLandedServer.Broadcast(Target, Result);
+			Client_ConfirmHit(Target, Result, Data.HitLocation);
+		}
+		else if (Cast<IEMBHitReceiver>(Target))
+		{
+			// Coup refusé par une cible qui traite elle-même les coups (nœud de ressource : mauvais outil) :
+			// le joueur en est informé (Ignored) pour afficher « outil inadapté ». Pas d'usure d'arme ni
+			// d'OnHitLandedServer. Au plus une fois par cible et par fenêtre de coup : la déduplication
+			// HitActorsThisWindow ci-dessus ne laisse passer chaque cible qu'une fois.
 			Client_ConfirmHit(Target, Result, Data.HitLocation);
 		}
 	}
@@ -1281,12 +1293,12 @@ FEMBHitData UEMBCombatComponent::BuildHitData(const FHitResult& Impact, const FV
 {
 	FEMBHitData Data;
 	Data.Instigator = GetOwner();
-	Data.Damage = WeaponBaseDamage * ActiveAttack.DamageMultiplier * ActiveHitParams.DamageScale;
+	Data.Damage = GetWeaponBaseDamage() * ActiveAttack.DamageMultiplier * ActiveHitParams.DamageScale;
 	if (GetWeaponDamageType() == EEMBDamageType::Physical)
 	{
 		Data.Damage *= 1.f + PassiveModifiers.PhysicalDamage; // Passif "Poigne d'acier" : +4 % par rang.
 	}
-	Data.PoiseDamage = ActiveAttack.PoiseDamage * ActiveHitParams.PoiseScale;
+	Data.PoiseDamage = ActiveAttack.PoiseDamage * ActiveHitParams.PoiseScale * EquipmentStats.PoiseDamageMultiplier;
 	Data.StaminaDamage = 0.f; // 0 => Damage x 0,5 côté cible.
 	Data.DamageType = GetWeaponDamageType();
 	Data.HitLocation = Impact.bStartPenetrating ? FVector(Impact.Location) : FVector(Impact.ImpactPoint);
@@ -1407,7 +1419,12 @@ EEMBHitResult UEMBCombatComponent::ReceiveHit(const FEMBHitData& IncomingHit)
 		{
 			return EEMBHitResult::Dodged;
 		}
-		Stats->ApplyDamage(Hit.Damage, Hit.Instigator);
+		// Dégâts continus : seule l'armure de FEU s'applique (lave, brûlure). L'armure physique protège des
+		// coups, pas de la faim, du froid ni du poison, qui contourneraient sinon tout l'intérêt de la survie.
+		const float DotDamage = (Hit.DamageType == EEMBDamageType::Fire)
+			? Hit.Damage * (1.f - GetArmorReduction(EEMBDamageType::Fire))
+			: Hit.Damage;
+		Stats->ApplyDamage(DotDamage, Hit.Instigator);
 		return Stats->IsDead() ? EEMBHitResult::Killed : EEMBHitResult::Hit;
 	}
 
@@ -1497,7 +1514,8 @@ EEMBHitResult UEMBCombatComponent::ResolveBlockedHit(const FEMBHitData& Hit)
 	const bool bHadStamina = Stats->ConsumeStamina(StaminaCost * FMath::Max(0.f, 1.f + PassiveModifiers.GuardStaminaCost));
 
 	// Dégâts résiduels : le complément de la réduction (physique 85 %, feu/givre/foudre 50 %, corruption 30 %).
-	Stats->ApplyDamage(Hit.Damage * (1.f - GetBlockReduction(Hit.DamageType)), Hit.Instigator);
+	// L'armure s'applique APRÈS la garde, multiplicativement (garde 85 % puis armure 30 % : 0,15 x 0,70).
+	Stats->ApplyDamage(Hit.Damage * (1.f - GetBlockReduction(Hit.DamageType)) * (1.f - GetArmorReduction(Hit.DamageType)), Hit.Instigator);
 	if (Stats->IsDead())
 	{
 		return EEMBHitResult::Killed;
@@ -1528,6 +1546,9 @@ EEMBHitResult UEMBCombatComponent::ResolveUnguardedHit(const FEMBHitData& Hit)
 	{
 		PoiseDamage *= EMBCombatDefaults::HyperArmorPoiseMultiplier;
 	}
+
+	// Armure (physique ou feu selon le type), après le counter-hit ; combinée aux passifs déjà appliqués.
+	Damage *= 1.f - GetArmorReduction(Hit.DamageType);
 
 	Stats->ApplyDamage(Damage, Hit.Instigator); // Peut déclencher OnDeath -> état Dead (HandleOwnerDeath).
 	if (Stats->IsDead())
@@ -1629,17 +1650,61 @@ void UEMBCombatComponent::SetPassiveModifiers(const FEMBPassiveModifiers& NewMod
 float UEMBCombatComponent::ScaledAttackCost(float BaseCost) const
 {
 	// Passif "Souffle du duelliste" : -5 % par rang (additif négatif), jamais en dessous de 0.
-	return BaseCost * FMath::Max(0.f, 1.f + PassiveModifiers.AttackStaminaCost);
+	// Combiné multiplicativement avec le multiplicateur de l'arme équipée (espadon : x1,25).
+	return BaseCost * FMath::Max(0.f, 1.f + PassiveModifiers.AttackStaminaCost) * EquipmentStats.AttackStaminaMultiplier;
 }
 
-float UEMBCombatComponent::GetBlockReduction(EEMBDamageType DamageType)
+float UEMBCombatComponent::GetBlockReduction(EEMBDamageType DamageType) const
 {
+	// Valeurs du bouclier équipé (par défaut : référentiel 4.2, physique 85 %, élémentaire 50 %, corruption 30 %).
 	switch (DamageType)
 	{
-	case EEMBDamageType::Physical:   return EMBCombatDefaults::BlockReductionPhysical;
-	case EEMBDamageType::Corruption: return EMBCombatDefaults::BlockReductionCorruption;
-	default:                         return EMBCombatDefaults::BlockReductionElemental; // feu, givre, foudre
+	case EEMBDamageType::Physical:   return EquipmentStats.GuardPhysical;
+	case EEMBDamageType::Corruption: return EquipmentStats.GuardCorruption;
+	default:                         return EquipmentStats.GuardElemental; // feu, givre, foudre
 	}
+}
+
+float UEMBCombatComponent::GetArmorReduction(EEMBDamageType DamageType) const
+{
+	// Seules la réduction physique et la réduction de feu existent ; les autres types ne sont pas réduits.
+	switch (DamageType)
+	{
+	case EEMBDamageType::Physical: return FMath::Clamp(EquipmentStats.ArmorPhysicalReduction, 0.f, EMBCombatDefaults::MaxArmorReduction);
+	case EEMBDamageType::Fire:     return FMath::Clamp(EquipmentStats.ArmorFireReduction, 0.f, EMBCombatDefaults::MaxArmorReduction);
+	default:                       return 0.f;
+	}
+}
+
+float UEMBCombatComponent::GetWeaponBaseDamage() const
+{
+	// Tant qu'aucun équipement n'a été appliqué, la valeur éditée du composant fait foi (compatibilité).
+	return bEquipmentApplied ? EquipmentStats.WeaponBaseDamage : WeaponBaseDamage;
+}
+
+void UEMBCombatComponent::SetEquipmentCombatStats(const FEMBEquipmentCombatStats& NewStats)
+{
+	if (!HasAuthorityOwner())
+	{
+		return;
+	}
+
+	// Assainissement : une valeur non finie ou négative d'un objet mal configuré ne doit pas casser le combat.
+	auto Safe = [](float Value, float Fallback, float Min, float Max)
+	{
+		return FMath::IsFinite(Value) ? FMath::Clamp(Value, Min, Max) : Fallback;
+	};
+
+	EquipmentStats = NewStats;
+	EquipmentStats.WeaponBaseDamage = Safe(NewStats.WeaponBaseDamage, 80.f, 0.f, 100000.f);
+	EquipmentStats.AttackStaminaMultiplier = Safe(NewStats.AttackStaminaMultiplier, 1.f, 0.f, 10.f);
+	EquipmentStats.PoiseDamageMultiplier = Safe(NewStats.PoiseDamageMultiplier, 1.f, 0.f, 10.f);
+	EquipmentStats.GuardPhysical = Safe(NewStats.GuardPhysical, 0.85f, 0.f, 1.f);
+	EquipmentStats.GuardElemental = Safe(NewStats.GuardElemental, 0.5f, 0.f, 1.f);
+	EquipmentStats.GuardCorruption = Safe(NewStats.GuardCorruption, 0.3f, 0.f, 1.f);
+	EquipmentStats.ArmorPhysicalReduction = Safe(NewStats.ArmorPhysicalReduction, 0.f, 0.f, EMBCombatDefaults::MaxArmorReduction);
+	EquipmentStats.ArmorFireReduction = Safe(NewStats.ArmorFireReduction, 0.f, 0.f, EMBCombatDefaults::MaxArmorReduction);
+	bEquipmentApplied = true;
 }
 
 UAnimMontage* UEMBCombatComponent::GetDodgeMontage() const

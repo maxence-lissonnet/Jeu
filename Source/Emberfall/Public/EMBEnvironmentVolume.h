@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "EMBSurvivalTypes.h"
+#include "EMBWeatherTypes.h"
 #include "EMBEnvironmentVolume.generated.h"
 
 class UBoxComponent;
@@ -33,6 +34,10 @@ public:
 	/** Corruption ajoutée par seconde à un joueur dans la zone (0,5 pour la brume corrompue) ; ×2 la nuit. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Environment", meta = (ClampMin = "0"))
 	float CorruptionRatePerSecond;
+
+	/** Identifiant du biome : sa météo vient de la ligne du même nom dans DT_Weather (défaut « Temperate »). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Environment")
+	FName BiomeId;
 
 	/** Plus la valeur est haute, plus le volume l'emporte sur les volumes qui se recouvrent. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Environment")

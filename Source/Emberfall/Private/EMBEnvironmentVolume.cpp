@@ -13,6 +13,7 @@ AEMBEnvironmentVolume::AEMBEnvironmentVolume()
 	BaseTemperatureC = EMBSurvivalDefaults::DefaultAmbientTemperatureC;
 	CorruptionRatePerSecond = EMBSurvivalDefaults::DefaultCorruptionRatePerSecond;
 	Priority = 0;
+	BiomeId = EMBWeather::DefaultBiomeId();
 
 	Box = CreateDefaultSubobject<UBoxComponent>(TEXT("Box"));
 	SetRootComponent(Box);

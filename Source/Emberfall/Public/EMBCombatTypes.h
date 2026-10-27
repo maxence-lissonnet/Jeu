@@ -176,6 +176,49 @@ struct EMBERFALL_API FEMBAttackDefinition
 	FGameplayTag AttackTag;
 };
 
+/**
+ * Valeurs de combat dérivées de l'équipement (arme, bouclier, armures), poussées par UEMBEquipmentComponent
+ * via UEMBCombatComponent::SetEquipmentCombatStats. Les valeurs par défaut reproduisent le comportement
+ * antérieur (épée de référence + bouclier de base) : un personnage sans équipement ne change pas.
+ */
+USTRUCT(BlueprintType)
+struct EMBERFALL_API FEMBEquipmentCombatStats
+{
+	GENERATED_BODY()
+
+	/** Dégâts de base de l'arme en main (remplace WeaponBaseDamage). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float WeaponBaseDamage = 80.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	EEMBDamageType WeaponDamageType = EEMBDamageType::Physical;
+
+	/** Multiplicateur du coût d'endurance des attaques (espadon : 1,25). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float AttackStaminaMultiplier = 1.f;
+
+	/** Multiplicateur des dégâts de poise infligés (espadon : 1,4). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float PoiseDamageMultiplier = 1.f;
+
+	/** Réduction de la garde (bouclier) : physique, élémentaire (feu, givre, foudre), corruption. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float GuardPhysical = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float GuardElemental = 0.50f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float GuardCorruption = 0.30f;
+
+	/** Réductions des armures (somme des pièces) ; plafonnées à 0,6 par le combat. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float ArmorPhysicalReduction = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Equipment")
+	float ArmorFireReduction = 0.f;
+};
+
 // ------------------------------------------------------------------------------------------------
 // Constantes de combat (référentiel 00_Constantes_et_Contrats.md, sections 4.1 à 4.3)
 // ------------------------------------------------------------------------------------------------
@@ -292,4 +335,5 @@ namespace EMBCombatDefaults
 	inline constexpr float InteractRange = 250.f;                // cm : portée d'interaction et de réanimation
 	inline constexpr float InteractHoldCheckInterval = 0.25f;    // s : contrôle serveur d'une interaction maintenue
 	inline constexpr float MaxFireResistance = 0.9f;             // plafond de la résistance au feu (passif + bonus)
+	inline constexpr float MaxArmorReduction = 0.6f;             // plafond des réductions d'armure (référentiel 14)
 }

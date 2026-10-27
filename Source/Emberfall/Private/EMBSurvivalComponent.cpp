@@ -16,7 +16,7 @@
 namespace
 {
 	/** Palier public de Corruption : 0 (< 50), 1 (>= 50), 2 (>= 75). */
-	uint8 ComputeCorruptionTier(float Corruption)
+	uint8 SurvivalCorruptionTier(float Corruption)
 	{
 		if (Corruption >= EMBSurvivalDefaults::CriticalThreshold)
 		{
@@ -26,13 +26,13 @@ namespace
 	}
 
 	/** Remplace une valeur non finie (NaN, infini) par 0 : une ligne de table ou un RPC ne doit pas empoisonner les jauges. */
-	float FiniteOrZero(float Value)
+	float SurvivalFiniteOrZero(float Value)
 	{
 		return FMath::IsFinite(Value) ? Value : 0.f;
 	}
 
 	/** Borne une valeur lue (sauvegarde) ; une valeur non finie retombe sur Fallback. */
-	float SanitizeRange(float Value, float Fallback, float Min, float Max)
+	float SurvivalSanitizeRange(float Value, float Fallback, float Min, float Max)
 	{
 		return FMath::IsFinite(Value) ? FMath::Clamp(Value, Min, Max) : Fallback;
 	}
@@ -166,7 +166,7 @@ bool UEMBSurvivalComponent::HasSurvivalTag(FGameplayTag Tag) const
 uint8 UEMBSurvivalComponent::GetVisibleCorruptionTier() const
 {
 	// Un proxy simulé (personnage d'un autre joueur) ne reçoit que le palier ; les autres rôles ont la valeur exacte.
-	return GetOwnerRole() == ROLE_SimulatedProxy ? PublicCorruptionTier : ComputeCorruptionTier(Corruption);
+	return GetOwnerRole() == ROLE_SimulatedProxy ? PublicCorruptionTier : SurvivalCorruptionTier(Corruption);
 }
 
 float UEMBSurvivalComponent::GetComfortRange() const
@@ -395,7 +395,7 @@ void UEMBSurvivalComponent::OnCorruptionChanged()
 void UEMBSurvivalComponent::RefreshReplicatedState()
 {
 	// Réaffecter une valeur identique ne génère aucun trafic : seules les vraies transitions sont envoyées.
-	PublicCorruptionTier = ComputeCorruptionTier(Corruption);
+	PublicCorruptionTier = SurvivalCorruptionTier(Corruption);
 	bIntoxicated = IntoxicationRemaining > 0.f;
 	bFireOilActive = FireOilRemaining > 0.f;
 	BroadcastSurvival();
@@ -437,11 +437,11 @@ void UEMBSurvivalComponent::HandleHitReceived(const FEMBHitData& Hit, EEMBHitRes
 		return;
 	}
 
-	float Amount = FiniteOrZero(Hit.CorruptionAmount);
+	float Amount = SurvivalFiniteOrZero(Hit.CorruptionAmount);
 	if (Amount <= 0.f && Hit.DamageType == EEMBDamageType::Corruption)
 	{
 		// Pas de montant explicite : clamp(0,2 x dégâts, 2, 20).
-		Amount = FMath::Clamp(HitCorruptionFactor * FiniteOrZero(Hit.Damage), HitCorruptionMin, HitCorruptionMax);
+		Amount = FMath::Clamp(HitCorruptionFactor * SurvivalFiniteOrZero(Hit.Damage), HitCorruptionMin, HitCorruptionMax);
 	}
 	if (Amount > 0.f)
 	{
@@ -525,9 +525,9 @@ void UEMBSurvivalComponent::SetPassiveModifiers(const FEMBPassiveModifiers& Mods
 	}
 
 	// Seuls les trois passifs de survie sont retenus (FireResistance : voir l'en-tête). Valeurs non finies neutralisées.
-	PassiveModifiers.HungerThirstRate = FiniteOrZero(Mods.HungerThirstRate);
-	PassiveModifiers.ComfortRange = FiniteOrZero(Mods.ComfortRange);
-	PassiveModifiers.CorruptionGain = FiniteOrZero(Mods.CorruptionGain);
+	PassiveModifiers.HungerThirstRate = SurvivalFiniteOrZero(Mods.HungerThirstRate);
+	PassiveModifiers.ComfortRange = SurvivalFiniteOrZero(Mods.ComfortRange);
+	PassiveModifiers.CorruptionGain = SurvivalFiniteOrZero(Mods.CorruptionGain);
 
 	// ComfortRange décale les seuils : les effets peuvent changer sans attendre le prochain tick.
 	PushEffects(false);
@@ -568,14 +568,14 @@ void UEMBSurvivalComponent::ImportSaveData(const FEMBSurvivalSaveData& In)
 	// Les défauts de FEMBSurvivalSaveData valent 0 : une structure neuve donnerait faim 0 et soif 0. La sauvegarde v2
 	// n'appelle cet import que si l'état existe (bHasSurvivalState) ; pour un joueur neuf, ne pas importer
 	// (valeurs de départ du composant) ou appeler ApplyRespawnValues.
-	Hunger = SanitizeRange(In.Hunger, StartHunger, 0.f, MaxGauge);
-	Thirst = SanitizeRange(In.Thirst, StartThirst, 0.f, MaxGauge);
+	Hunger = SurvivalSanitizeRange(In.Hunger, StartHunger, 0.f, MaxGauge);
+	Thirst = SurvivalSanitizeRange(In.Thirst, StartThirst, 0.f, MaxGauge);
 	// Jamais 100 : le joueur serait tué au premier tick ; une sauvegarde saine ne contient pas un joueur mort.
-	Corruption = SanitizeRange(In.Corruption, 0.f, 0.f, MaxImportedCorruption);
-	FeltTemperature = SanitizeRange(In.FeltTemperature, NeutralTemperatureC, MinFeltTemperatureC, MaxFeltTemperatureC);
+	Corruption = SurvivalSanitizeRange(In.Corruption, 0.f, 0.f, MaxImportedCorruption);
+	FeltTemperature = SurvivalSanitizeRange(In.FeltTemperature, NeutralTemperatureC, MinFeltTemperatureC, MaxFeltTemperatureC);
 
-	IntoxicationRemaining = SanitizeRange(In.IntoxicationRemaining, 0.f, 0.f, MaxIntoxicationSeconds);
-	FireOilRemaining = SanitizeRange(In.FireOilRemaining, 0.f, 0.f, MaxFireOilSeconds);
+	IntoxicationRemaining = SurvivalSanitizeRange(In.IntoxicationRemaining, 0.f, 0.f, MaxIntoxicationSeconds);
+	FireOilRemaining = SurvivalSanitizeRange(In.FireOilRemaining, 0.f, 0.f, MaxFireOilSeconds);
 	// Intensités non sauvegardées (contrat 10.4) : valeurs de référence du référentiel.
 	IntoxicationDamagePerSecond = DefaultIntoxicationDamagePerSecond;
 	FireOilBonus = DefaultFireOilBonus;
@@ -744,15 +744,15 @@ void UEMBSurvivalComponent::ApplyConsumable(const FEMBConsumableRow& Row)
 	using namespace EMBSurvivalDefaults;
 
 	// Les valeurs de la table sont de la donnée de conception éditable : neutralisées si non finies.
-	Hunger = FMath::Clamp(Hunger + FiniteOrZero(Row.HungerDelta), 0.f, MaxGauge);
-	Thirst = FMath::Clamp(Thirst + FiniteOrZero(Row.ThirstDelta), 0.f, MaxGauge);
+	Hunger = FMath::Clamp(Hunger + SurvivalFiniteOrZero(Row.HungerDelta), 0.f, MaxGauge);
+	Thirst = FMath::Clamp(Thirst + SurvivalFiniteOrZero(Row.ThirstDelta), 0.f, MaxGauge);
 
 	if (Row.HealthPercent > 0.f && Stats)
 	{
-		Stats->Heal(Stats->GetMaxHealth() * FMath::Clamp(FiniteOrZero(Row.HealthPercent), 0.f, 1.f));
+		Stats->Heal(Stats->GetMaxHealth() * FMath::Clamp(SurvivalFiniteOrZero(Row.HealthPercent), 0.f, 1.f));
 	}
 
-	const float CorruptionDelta = FiniteOrZero(Row.CorruptionDelta);
+	const float CorruptionDelta = SurvivalFiniteOrZero(Row.CorruptionDelta);
 	if (CorruptionDelta > 0.f)
 	{
 		AddCorruption(CorruptionDelta);
@@ -766,18 +766,18 @@ void UEMBSurvivalComponent::ApplyConsumable(const FEMBConsumableRow& Row)
 	{
 		IntoxicationRemaining = 0.f;
 	}
-	const float Chance = FMath::Clamp(FiniteOrZero(Row.IntoxicationChance), 0.f, 1.f);
+	const float Chance = FMath::Clamp(SurvivalFiniteOrZero(Row.IntoxicationChance), 0.f, 1.f);
 	if (Chance > 0.f && Row.IntoxicationDuration > 0.f && FMath::FRand() < Chance)
 	{
 		// Non cumulable : la durée la plus longue l'emporte, l'intensité est celle de la dernière source.
-		IntoxicationRemaining = FMath::Max(IntoxicationRemaining, FMath::Min(FiniteOrZero(Row.IntoxicationDuration), MaxIntoxicationSeconds));
-		IntoxicationDamagePerSecond = FMath::Clamp(FiniteOrZero(Row.IntoxicationDamagePerSecond), 0.f, MaxIntoxicationDamagePerSecond);
+		IntoxicationRemaining = FMath::Max(IntoxicationRemaining, FMath::Min(SurvivalFiniteOrZero(Row.IntoxicationDuration), MaxIntoxicationSeconds));
+		IntoxicationDamagePerSecond = FMath::Clamp(SurvivalFiniteOrZero(Row.IntoxicationDamagePerSecond), 0.f, MaxIntoxicationDamagePerSecond);
 	}
 
 	if (Row.FireResistanceBonus > 0.f && Row.FireResistanceDuration > 0.f)
 	{
 		// Non cumulable : un nouvel usage remplace le bonus et rafraîchit la durée (jamais de somme).
-		FireOilBonus = FMath::Clamp(FiniteOrZero(Row.FireResistanceBonus), 0.f, MaxFireResistanceBonus);
-		FireOilRemaining = FMath::Min(FiniteOrZero(Row.FireResistanceDuration), MaxFireOilSeconds);
+		FireOilBonus = FMath::Clamp(SurvivalFiniteOrZero(Row.FireResistanceBonus), 0.f, MaxFireResistanceBonus);
+		FireOilRemaining = FMath::Min(SurvivalFiniteOrZero(Row.FireResistanceDuration), MaxFireOilSeconds);
 	}
 }

@@ -5,6 +5,8 @@
 #include "EMBBuildingComponent.h"
 #include "EMBCharacterMovementComponent.h"
 #include "EMBCombatComponent.h"
+#include "EMBCraftingComponent.h"
+#include "EMBEquipmentComponent.h"
 #include "EMBGameMode.h"
 #include "EMBGameplayTags.h"
 #include "EMBInventoryComponent.h"
@@ -97,6 +99,8 @@ AEMBPlayerCharacter::AEMBPlayerCharacter(const FObjectInitializer& ObjectInitial
 	Inventory = CreateDefaultSubobject<UEMBInventoryComponent>(TEXT("Inventory"));
 	Building = CreateDefaultSubobject<UEMBBuildingComponent>(TEXT("Building"));
 	Survival = CreateDefaultSubobject<UEMBSurvivalComponent>(TEXT("Survival"));
+	Equipment = CreateDefaultSubobject<UEMBEquipmentComponent>(TEXT("Equipment"));
+	Crafting = CreateDefaultSubobject<UEMBCraftingComponent>(TEXT("Crafting"));
 	QuickConsumableId = TEXT("HealingFlask");
 }
 
@@ -114,8 +118,17 @@ void AEMBPlayerCharacter::BeginPlay()
 	if (Inventory)
 	{
 		Inventory->OnInventoryChanged.AddUniqueDynamic(this, &AEMBPlayerCharacter::HandleInventoryChanged);
-		UpdateEncumbrance();
 	}
+	if (Equipment)
+	{
+		Equipment->OnEquipmentChanged.AddUniqueDynamic(this, &AEMBPlayerCharacter::HandleEquipmentChanged);
+	}
+	UpdateEncumbrance();
+}
+
+void AEMBPlayerCharacter::HandleEquipmentChanged()
+{
+	UpdateEncumbrance();
 }
 
 void AEMBPlayerCharacter::PossessedBy(AController* NewController)
@@ -131,6 +144,27 @@ void AEMBPlayerCharacter::PossessedBy(AController* NewController)
 			Progression->ApplyModifiersToPawn(this);
 		}
 	}
+	// Équipement et fabrication mis en attente par la réapparition (le pawn précédent a été détruit).
+	if (AEMBPlayerState* EMBState = GetPlayerState<AEMBPlayerState>())
+	{
+		FEMBEquipmentSaveData PendingEquipment;
+		FEMBCraftingSaveData PendingCrafting;
+		if (EMBState->ConsumePendingLoadout(PendingEquipment, PendingCrafting))
+		{
+			if (Equipment)
+			{
+				Equipment->ImportSaveData(PendingEquipment);
+			}
+			if (Crafting)
+			{
+				Crafting->ImportSaveData(PendingCrafting);
+			}
+		}
+	}
+	if (Equipment)
+	{
+		Equipment->RefreshDerivedStats(/*bForce=*/true); // Pousse arme, armures et isolation vers combat, stats et survie.
+	}
 	UpdateEncumbrance();
 }
 
@@ -145,8 +179,10 @@ void AEMBPlayerCharacter::UpdateEncumbrance()
 	{
 		return;
 	}
+	// Encombrement = (ressources + sac d'objets + objets équipés) / charge maximale.
 	const float MaxWeight = Inventory->GetMaxCarryWeight();
-	Combat->SetEncumbranceRatio(MaxWeight > KINDA_SMALL_NUMBER ? Inventory->GetCurrentWeight() / MaxWeight : 0.f);
+	const float TotalWeight = Inventory->GetCurrentWeight() + (Equipment ? Equipment->GetTotalWeight() : 0.f);
+	Combat->SetEncumbranceRatio(MaxWeight > KINDA_SMALL_NUMBER ? TotalWeight / MaxWeight : 0.f);
 }
 
 UEMBCharacterMovementComponent* AEMBPlayerCharacter::GetEMBMovement() const

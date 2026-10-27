@@ -40,6 +40,12 @@ EmberfallGDD/
 │   ├── DT_ColossusAttacks.csv     (même struct, 9 attaques du Colosse)
 │   ├── DT_SeraphAttacks.csv       (même struct, 9 attaques de Nyxariel)
 │   ├── DT_Consumables.csv         (FEMBConsumableRow, 9 consommables)
+│   ├── DT_ResourceNodes.csv       (FEMBResourceNodeRow, 14 nœuds de récolte)
+│   ├── DT_Items.csv               (FEMBItemRow, 35 objets durables)
+│   ├── DT_Recipes.csv             (FEMBRecipeRow, 79 recettes dont 35 réparations)
+│   ├── DT_Weather.csv             (FEMBWeatherRow, 6 biomes)
+│   ├── DT_Creatures.csv           (FEMBCreatureRow, 3 archétypes)
+│   ├── DT_GhoulAttacks.csv, DT_RockWyvernAttacks.csv, DT_SylvadracAttacks.csv (FEMBDragonAttackRow)
 │   ├── DT_Glyphs.csv              (FEMBGlyphRow, 36 glyphes dont 6 secrets)
 │   ├── DT_SkillNodes.csv          (FEMBSkillNodeRow, 20 nœuds)
 │   └── DT_BuildPieces.csv         (FEMBBuildPieceRow)
@@ -76,6 +82,10 @@ Fichiers du module, par système :
 | Boss 1 — Colosse d'Ossivaire | `AEMBColossusBoss`, `AEMBColossusArena` + `AEMBObelisk`, `UBTTask_EMBColossusCharge` |
 | Boss 2 — Nyxariel | `AEMBSeraphBoss`, `AEMBSeraphShadow` (clones), `AEMBSeraphArena` + `AEMBSeraphBell`, `AEMBProjectile` (poolé), `UBTTask_EMBSeraphDash`, `UBTTask_EMBSeraphPlunge`, `UBTTask_EMBSeraphReposition` |
 | Boss final — Vaelthyrax | `AEMBDragonBoss`, `AEMBDragonAIController`, `AEMBDragonArena`, `UBTTask_EMBDragonBreath`, `UBTTask_EMBDragonDiveAttack` |
+| Récolte (v1.4) | `EMBResourceNodeTypes.h`, `AEMBResourceNode` (nœuds frappés à l’outil), `AEMBFallingTree` (chute physique), `UEMBResourceNodeSubsystem` (réapparition, carcasses, sauvegarde) |
+| Objets, équipement, artisanat (v1.4) | `EMBItemTypes.h`, `UEMBEquipmentComponent` (sac de 40 objets, 6 emplacements, durabilité, stats poussées au combat), `UEMBCraftingComponent` (file serveur, ateliers construits, glyphes) |
+| Météo et jour/nuit (v1.4) | `EMBWeatherTypes.h`, `UEMBWeatherSubsystem` (horloge 48 min, météo par biome), `AEMBWorldStateReplicator` (réplication), `AEMBSkyController` (soleil, lune, brouillard, nuages ; acteurs du niveau) |
+| Bestiaire (v1.4) | `AEMBCreatureBase` (+ goule, wyverneau), `AEMBCreatureAIController`, tâches/service `BTTask_EMBCreatureAttack`, `BTTask_EMBCreatureFlee`, `BTService_EMBCreatureContext`, `AEMBTerritorialDragon` (Sylvadrac, dérive de `AEMBBossBase`), `AEMBCreatureSpawner`, `UEMBCreatureSignificance` |
 
 ## Intégrer le module dans un projet UE5
 
@@ -95,8 +105,9 @@ Fichiers du module, par système :
 7. Régénérer les fichiers de projet et compiler.
 
 **Après la compilation (dans l'éditeur)** :
-- Importer les CSV de `Data/` en DataTables avec les structs `FEMBDragonAttackRow` (aussi pour `DT_ColossusAttacks` et `DT_SeraphAttacks`), `FEMBGlyphRow`, `FEMBSkillNodeRow`, `FEMBBuildPieceRow`, `FEMBConsumableRow`, et les enregistrer sous `/Game/Data/` (`DT_Glyphs`, `DT_SkillNodes`, `DT_BuildPieces`, `DT_Consumables`) : la progression, la survie et la sauvegarde les chargent par ces chemins.
+- Importer les CSV de `Data/` en DataTables avec les structs `FEMBDragonAttackRow` (aussi pour `DT_ColossusAttacks` et `DT_SeraphAttacks`), `FEMBGlyphRow`, `FEMBSkillNodeRow`, `FEMBBuildPieceRow`, `FEMBConsumableRow`, `FEMBResourceNodeRow`, `FEMBItemRow`, `FEMBRecipeRow`, `FEMBWeatherRow`, `FEMBCreatureRow` (les tables d’attaques des créatures en `FEMBDragonAttackRow`), et les enregistrer sous `/Game/Data/` sous le nom du fichier : la progression, la survie et la sauvegarde les chargent par ces chemins.
 - Créer les Behavior Trees et Blackboards du Colosse et de Nyxariel (structure en commentaire d'en-tête de `EMBColossusBoss.h` et `EMBSeraphBoss.h`), les Blueprints des boss, du sac, des projectiles, clones, cloches et obélisques ; les Input Actions `IA_Interact`, `IA_Respawn` (optionnelle), `IA_QuickConsume` (optionnelle).
+- v1.4 : Behavior Trees `BT_Creature`/`BB_Creature` et `BT_Sylvadrac` (structure dans les en-têtes), Blueprints de nœuds de récolte (mesh avec collision Overlap sur `EMBMeleeHit`, `NodeId` généré), carcasses (colonne `NodeClass`), créatures et spawners (NavMesh requis), un `AEMBSkyController` dans le niveau et un `BiomeId` sur chaque volume d’environnement ; vérifier à la première ouverture que le `SignificanceManager` est bien créé (`DefaultEngine.ini`, clé écrite de mémoire).
 - Créer les Blueprints enfants (`BP_PlayerCharacter`, `BP_Vaelthyrax`, `BP_DragonAIController`, pièces de construction), assigner montages, Input Actions, Mapping Context, matériau fantôme (paramètre `GhostColor`), DataTables.
 - Placer les AnimNotifyStates (`ComboWindow`, `HitWindow`) dans les montages d'attaque ; les i-frames de roulade sont pilotées par le code (le notify `IFrames` est optionnel).
 - Créer le Blackboard et le Behavior Tree du dragon selon `docs/02_Architecture.md` §4.
@@ -109,7 +120,7 @@ Fichiers du module, par système :
 | Compilation C++ (UHT, UBT) | **Non vérifiée** : aucun build n'a été lancé, Unreal n'est pas installé. Attendez-vous à des corrections au premier build. |
 | Exécution, tests de gameplay, tests réseau | **Non réalisés.** |
 | Revue de code statique | v1.1 : trois relectures par système, corrections, revue d’intégration. v1.2 (progression, sauvegarde) et v1.3 (mort, survie, boss) : à chaque fois une revue par système, une revue d’intégration, puis une passe de corrections groupée. Aucune erreur de compilation certaine relevée, mais les API ont été vérifiées **de mémoire**, pas contre les sources du moteur. |
-| Fonctionnalités prévues mais non codées (après v1.3) | Système météo et cycle jour/nuit (seuls les points d'entrée de l'environnement existent), exécution des compétences actives, équipement (isolation thermique, poids d'équipement), artisanat/recettes de forge, récolte (le passif `HarvestYield` reste sans effet), UI, créatures et dragons territoriaux, ennemi « Possédé » à Corruption 100. Sources d'XP : les trois boss et les lieux découverts seulement. |
+| Fonctionnalités prévues mais non codées (après v1.4) | Exécution des compétences actives, UI, raids des dragons territoriaux sur les bases, autres créatures et dragons du GDD (Loup-fléau, Glacivorn, Tempestar…), effets de la météo sur le gameplay (feux éteints sous la pluie, neige qui ralentit), ressources « peau » et « fourrure » (les armures de peaux/fourrures utilisent Fibre et Viande crue en attendant), réparation à moitié prix du glyphe `S_SunkenCodex`, ennemi « Possédé ». |
 | Cohérence des valeurs GDD ↔ code ↔ CSV | Contrôlée par le chef d'équipe et les relecteurs contre `00_Constantes_et_Contrats.md`. |
 | Import des CSV dans l'éditeur | **Non testé** ; structure des colonnes vérifiée par lecture (PowerShell `Import-Csv`). |
 | Diagrammes Mermaid | Non rendus dans un outil. |

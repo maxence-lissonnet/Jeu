@@ -33,9 +33,10 @@ class EMBERFALL_API UEMBSaveGame : public USaveGame
 public:
 	/**
 	 * Version du format actuellement écrite. Historique : 1 = format initial ; 2 = survie par joueur, liaison de
-	 * réapparition, sacs de mort (migration 1 -> 2 : champs ajoutés, valeurs par défaut).
+	 * réapparition, sacs de mort (migration 1 -> 2 : champs ajoutés, valeurs par défaut) ; 3 = équipement, file de
+	 * fabrication, nœuds de récolte épuisés, météo (migration 2 -> 3 : champs ajoutés, drapeaux bHas...State à faux).
 	 */
-	static constexpr int32 CurrentFormatVersion = 2;
+	static constexpr int32 CurrentFormatVersion = 3;
 
 	/**
 	 * Version du format du fichier. Valeur par défaut VOLONTAIREMENT 0 (invalide), renseignée explicitement à l'écriture.

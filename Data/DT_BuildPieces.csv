@@ -28,6 +28,6 @@ StorageChest,Coffre de rangement,Furniture,Wood,,"((""Wood"", 25))",True,False,,
 Campfire,Feu de camp,Workstation,Stone,,"((""Stone"", 8),(""Wood"", 5))",True,False,,G_Campfire,True,600,15,0,0
 Workbench,Etabli,Workstation,Wood,,"((""Wood"", 30),(""Flint"", 10))",True,False,,G_Workbench,False,0,0,0,0
 Forge,Forge,Workstation,Stone,,"((""Stone"", 40),(""IronOre"", 10))",True,False,,G_Forge,False,400,10,0,0
-Smelter,Fonderie,Workstation,Stone,,"((""Stone"", 60),(""IronIngot"", 10))",True,False,,G_Smelting,False,0,0,0,0
+Smelter,Fonderie,Workstation,Stone,,"((""Stone"", 60),(""IronOre"", 10))",True,False,,G_Smelting,False,0,0,0,0
 DraconicForge,Forge draconique,Workstation,Draconic,,"((""DragonBone"", 6),(""Obsidian"", 20),(""EmberHeart"", 1),(""BlackSteelIngot"", 10))",True,False,,G_DraconicForge,False,0,0,0,0
 PurifyingBrazier,Brasero purificateur,Workstation,Stone,,"((""Stone"", 20),(""IronIngot"", 5),(""MoonSilver"", 2))",True,False,,G_PurifyingBrazier,False,0,0,800,1

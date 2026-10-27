@@ -1,0 +1,7 @@
+---,InitialState,WeightClear,WeightOvercast,WeightRain,WeightStorm,WeightFog,WeightSnow,WeightCorruptedMist,WeightAshStorm
+Temperate,Clear,40,25,20,5,10,0,0,0
+Forest,Clear,30,25,20,5,20,0,0,0
+Mountains,Overcast,15,20,5,5,10,45,0,0
+Marsh,Fog,5,15,10,0,30,0,40,0
+Caldera,Overcast,10,15,0,5,0,0,0,70
+Coast,Clear,25,20,20,25,10,0,0,0

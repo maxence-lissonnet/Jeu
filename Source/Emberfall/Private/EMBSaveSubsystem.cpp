@@ -7,7 +7,9 @@
 #include "EMBBuildingTypes.h"
 #include "EMBBossBase.h"
 #include "EMBCombatComponent.h"
+#include "EMBCraftingComponent.h"
 #include "EMBDeathBag.h"
+#include "EMBEquipmentComponent.h"
 #include "EMBGameplayTags.h"
 #include "EMBInventoryComponent.h"
 #include "EMBPlayerCharacter.h"
@@ -15,11 +17,13 @@
 #include "EMBProgressionComponent.h"
 #include "EMBProgressionSettings.h"
 #include "EMBProgressionSubsystem.h"
+#include "EMBResourceNodeSubsystem.h"
 #include "EMBRespawnSubsystem.h"
 #include "EMBSaveGame.h"
 #include "EMBStatsComponent.h"
 #include "EMBStructureSubsystem.h"
 #include "EMBSurvivalComponent.h"
+#include "EMBWeatherSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -136,6 +140,8 @@ void UEMBSaveSubsystem::BindToWorld(UWorld* World)
 	bSavePending = false;
 	bSaveDeferredByBoss = false;
 	bBlockedByUnusableSave = false;
+	RetainedWeather = FEMBWeatherSaveData();
+	bHasRetainedWeather = false;
 	// bWriteInFlight n'est volontairement PAS remis à zéro : une écriture de l'ancien monde peut encore tourner, et une
 	// seule écriture à la fois est autorisée ; son callback (OnSlotSaved) le remettra à false.
 
@@ -410,6 +416,31 @@ void UEMBSaveSubsystem::ApplyLoadedSave(UWorld* World, UEMBSaveGame* Save)
 			{
 				Boss->ApplyDefeatedFromSave();
 			}
+		}
+	}
+
+	// Nœuds de récolte (v3) : minuteries des nœuds épuisés. Le sous-système garde en attente les nœuds pas encore
+	// streamés. Absent d'une sauvegarde v1/v2 migrée : tous les nœuds restent pleins. L'import est borné par Dev G
+	// (UEMBResourceNodeSubsystem::ImportSaveData), la sauvegarde ne duplique pas ses règles.
+	if (Save->World.bHasResourceNodesState)
+	{
+		if (UEMBResourceNodeSubsystem* Nodes = World->GetSubsystem<UEMBResourceNodeSubsystem>())
+		{
+			Nodes->ImportSaveData(Save->World.ResourceNodes);
+		}
+	}
+
+	// Météo et heure du jour (v3). Absent d'une sauvegarde migrée : le monde repart à l'état initial (08 h). Le
+	// sous-système s'initialise de façon paresseuse, l'ordre par rapport à son propre BeginPlay n'a pas d'importance.
+	if (Save->World.bHasWeatherState)
+	{
+		// Bloc mémorisé : réécrit tel quel par un snapshot si l'export de la météo n'est pas prêt à ce moment-là.
+		RetainedWeather = Save->World.Weather;
+		bHasRetainedWeather = true;
+
+		if (UEMBWeatherSubsystem* Weather = World->GetSubsystem<UEMBWeatherSubsystem>())
+		{
+			Weather->ImportSaveData(Save->World.Weather);
 		}
 	}
 
@@ -873,6 +904,24 @@ bool UEMBSaveSubsystem::TryRestorePawn(APlayerController* PC, const FEMBPlayerSa
 			Stats->RestoreFromSave(Data.Health, Data.Stamina);
 		}
 	}
+	// Équipement et file de fabrication (v3) : absents d'une sauvegarde v1/v2 migrée (drapeaux à faux), le joueur reste
+	// alors sans objet. Les imports sont bornés par leurs composants (identifiants inconnus ignorés, durabilités et
+	// tailles bornées). Équipement d'abord : la fabrication peut en dépendre (poids, sac plein).
+	if (Data.bHasEquipmentState)
+	{
+		if (UEMBEquipmentComponent* Equipment = Character->FindComponentByClass<UEMBEquipmentComponent>())
+		{
+			Equipment->ImportSaveData(Data.Equipment);
+		}
+	}
+	if (Data.bHasCraftingState)
+	{
+		if (UEMBCraftingComponent* Crafting = Character->FindComponentByClass<UEMBCraftingComponent>())
+		{
+			Crafting->ImportSaveData(Data.Crafting);
+		}
+	}
+
 	// Survie (v2) : absente d'une sauvegarde v1 migrée, le joueur garde alors ses valeurs par défaut.
 	if (Data.bHasSurvivalState)
 	{
@@ -956,6 +1005,19 @@ void UEMBSaveSubsystem::BuildPlayerData(APlayerController* PC, FEMBPlayerSaveDat
 	}
 	OutData.bHasPawnTransform = true;
 	OutData.PawnTransform = FTransform(Character->GetActorRotation(), Character->GetActorLocation());
+
+	// Équipement et file de fabrication (v3). Conservés tels quels pour un joueur mort : seules les RESSOURCES partent
+	// dans le sac de mort, ni les objets équipés ni la file ne sont touchés par la sauvegarde.
+	if (const UEMBEquipmentComponent* Equipment = Character->FindComponentByClass<UEMBEquipmentComponent>())
+	{
+		Equipment->ExportSaveData(OutData.Equipment);
+		OutData.bHasEquipmentState = true;
+	}
+	if (const UEMBCraftingComponent* Crafting = Character->FindComponentByClass<UEMBCraftingComponent>())
+	{
+		Crafting->ExportSaveData(OutData.Crafting);
+		OutData.bHasCraftingState = true;
+	}
 
 	// Jauges de survie (v2).
 	if (const UEMBSurvivalComponent* Survival = Character->FindComponentByClass<UEMBSurvivalComponent>())
@@ -1361,6 +1423,25 @@ UEMBSaveGame* UEMBSaveSubsystem::BuildSnapshot()
 		}
 
 		CaptureDeathBags(Save->World.DeathBags);
+
+		// Nœuds de récolte épuisés et météo (v3).
+		if (const UEMBResourceNodeSubsystem* Nodes = World->GetSubsystem<UEMBResourceNodeSubsystem>())
+		{
+			Nodes->ExportSaveData(Save->World.ResourceNodes);
+			Save->World.bHasResourceNodesState = true;
+		}
+		// Météo : l'export peut échouer (état pas encore prêt, ex. sauvegarde très tôt après le chargement). Dans ce cas on
+		// n'écrit PAS un bloc vide marqué valide : on conserve le bloc du fichier chargé s'il existait.
+		const UEMBWeatherSubsystem* Weather = World->GetSubsystem<UEMBWeatherSubsystem>();
+		if (Weather && Weather->ExportSaveData(Save->World.Weather))
+		{
+			Save->World.bHasWeatherState = true;
+		}
+		else if (bHasRetainedWeather)
+		{
+			Save->World.Weather = RetainedWeather;
+			Save->World.bHasWeatherState = true;
+		}
 
 		if (const UEMBProgressionSubsystem* Progression = World->GetSubsystem<UEMBProgressionSubsystem>())
 		{

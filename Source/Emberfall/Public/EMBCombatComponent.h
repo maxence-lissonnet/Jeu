@@ -20,6 +20,8 @@ class USkeletalMeshComponent;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEMBOnCombatStateChanged, EEMBCombatState, OldState, EEMBCombatState, NewState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEMBOnParrySuccess, AActor*, Attacker);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEMBOnHitReceived, const FEMBHitData&, Hit, EEMBHitResult, Result);
+/** Serveur : un coup de CE combattant vient d'être résolu (cible touchée, y compris un nœud de ressource). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEMBOnHitLandedServer, AActor*, Target, EEMBHitResult, Result);
 /** Retour de coup côté attaquant (client propriétaire) : cible touchée, résultat, point d'impact. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FEMBOnHitConfirmed, AActor*, Target, EEMBHitResult, Result, FVector, Location);
 
@@ -88,6 +90,13 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Emberfall|Combat")
 	FEMBOnHitReceived OnHitReceived;
 
+	/**
+	 * SERVEUR uniquement : émis quand un coup de ce combattant est résolu (résultat différent de Ignored), qu'il
+	 * touche un joueur, une créature ou un nœud de ressource (IEMBHitReceiver). Sert à l'usure de l'arme.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Emberfall|Combat")
+	FEMBOnHitLandedServer OnHitLandedServer;
+
 	/** Sur le client de l'attaquant : un de nos coups vient d'être résolu (hitmarker, son, hit-stop). Non fiable. */
 	UPROPERTY(BlueprintAssignable, Category = "Emberfall|Combat")
 	FEMBOnHitConfirmed OnHitConfirmed;
@@ -124,6 +133,16 @@ public:
 
 	/** Serveur : le coup fatal de la dernière mort portait bLethalZone (lave, vide). Faim, froid, brûlure : non. */
 	bool WasKilledInLethalZone() const { return bKilledInLethalZone; }
+
+	/**
+	 * Serveur, poussé par l'équipement. Remplace dégâts et type de l'arme, multiplicateurs d'endurance et de poise,
+	 * valeurs de garde et réductions d'armure (plafonnées à 0,6). Répliqué au propriétaire (UI).
+	 * Armures : appliquées APRÈS la garde, multiplicativement avec les passifs ; aux dégâts continus, seule la
+	 * réduction de feu s'applique (jamais l'armure physique : faim, froid et poison ne sont pas des coups).
+	 */
+	void SetEquipmentCombatStats(const FEMBEquipmentCombatStats& NewStats);
+
+	const FEMBEquipmentCombatStats& GetEquipmentCombatStats() const { return EquipmentStats; }
 
 	/** Serveur. Sort de l'état Dead (réanimation) : retour à Idle, montage de mort arrêté. Sans effet hors de l'état Dead. */
 	void ResetFromDeath();
@@ -360,7 +379,10 @@ private:
 	float GetDodgeIFrameEnd() const;
 	float ScaledAttackCost(float BaseCost) const;
 	void CancelSpawnProtection();
-	static float GetBlockReduction(EEMBDamageType DamageType);
+	float GetBlockReduction(EEMBDamageType DamageType) const;
+	/** Réduction d'armure pour ce type de dégâts (0 si aucune), plafonnée. */
+	float GetArmorReduction(EEMBDamageType DamageType) const;
+	float GetWeaponBaseDamage() const;
 	void ApplyParryPosture(AActor* Attacker);
 	void ArmBufferExpiry();
 	bool PlayMontageLocal(UAnimMontage* Montage, float PlayRate, FName StartSection, bool bTrackEnd);
@@ -379,7 +401,7 @@ private:
 	bool HasAuthorityOwner() const;
 	static bool IsAttackState(EEMBCombatState State);
 	void ResolveDefaultTags();
-	EEMBDamageType GetWeaponDamageType() const { return EEMBDamageType::Physical; }
+	EEMBDamageType GetWeaponDamageType() const { return EquipmentStats.WeaponDamageType; }
 
 	// ---------------------------------------------------------------- Données
 
@@ -433,6 +455,11 @@ private:
 
 	/** Bonus de passifs courants (serveur) ; tout à 0 = neutre. */
 	FEMBPassiveModifiers PassiveModifiers;
+
+	/** Valeurs issues de l'équipement. Propriétaire seul (UI). bEquipmentApplied : sinon WeaponBaseDamage du composant fait foi. */
+	UPROPERTY(Replicated)
+	FEMBEquipmentCombatStats EquipmentStats;
+	bool bEquipmentApplied = false;
 
 	/** Bonus temporaire de résistance au feu (huile), serveur. */
 	float ExtraFireResistance = 0.f;
