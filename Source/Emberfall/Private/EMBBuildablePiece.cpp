@@ -3,8 +3,13 @@
 #include "EMBBuildablePiece.h"
 
 #include "Emberfall.h"
+#include "EMBEnvironmentSubsystem.h"
+#include "EMBRespawnSubsystem.h"
 #include "EMBStructureSubsystem.h"
+#include "EMBSurvivalComponent.h"
+#include "EMBSurvivalTypes.h"
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/PlayerState.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
@@ -83,6 +88,118 @@ void AEMBBuildablePiece::InitializePiece(FName InRowName, EEMBBuildMaterial InMa
 	CurrentHealth = GetMaxHealth();
 }
 
+void AEMBBuildablePiece::ApplyRowFunctions(const FEMBBuildPieceRow& Row)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	bIsRespawnPoint = Row.bIsRespawnPoint;
+	// Bornes : une table mal renseignée ne doit pas produire un rayon négatif ou infini.
+	// Mêmes bornes que l'environnement (EMBSurvivalDefaults) : une valeur acceptée ici ne sera pas rognée plus loin.
+	HeatRadius = FMath::Clamp(Row.HeatRadius, 0.f, 5000.f);
+	HeatBonus = FMath::Clamp(Row.HeatBonus, -EMBSurvivalDefaults::MaxHeatBonusC, EMBSurvivalDefaults::MaxHeatBonusC);
+	PurifyRadius = FMath::Clamp(Row.PurifyRadius, 0.f, 5000.f);
+	PurifyRate = FMath::Clamp(Row.PurifyRate, 0.f, EMBSurvivalDefaults::MaxPurifierRate);
+}
+
+void AEMBBuildablePiece::RegisterEnvironmentFunctions()
+{
+	if (!HasAuthority() || bEnvironmentRegistered || bCollapsed || (HeatRadius <= 0.f && PurifyRadius <= 0.f))
+	{
+		return;
+	}
+	if (UEMBEnvironmentSubsystem* Environment = GetWorld() ? GetWorld()->GetSubsystem<UEMBEnvironmentSubsystem>() : nullptr)
+	{
+		if (HeatRadius > 0.f)
+		{
+			Environment->RegisterHeatSource(this, HeatRadius, HeatBonus);
+		}
+		if (PurifyRadius > 0.f)
+		{
+			Environment->RegisterPurifier(this, PurifyRadius, PurifyRate);
+		}
+		bEnvironmentRegistered = true;
+	}
+}
+
+void AEMBBuildablePiece::UnregisterEnvironmentFunctions()
+{
+	if (!bEnvironmentRegistered)
+	{
+		return;
+	}
+	bEnvironmentRegistered = false;
+	if (UEMBEnvironmentSubsystem* Environment = GetWorld() ? GetWorld()->GetSubsystem<UEMBEnvironmentSubsystem>() : nullptr)
+	{
+		Environment->UnregisterHeatSource(this);
+		Environment->UnregisterPurifier(this);
+	}
+}
+
+bool AEMBBuildablePiece::IsSheltered() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	// Trace vers le haut depuis le dessus de la pièce. EMBBuilding (ECC_GameTraceChannel2) est bloqué par les
+	// pièces de construction : toucher une pièce = un toit, un plafond ou un étage au-dessus = à l'abri.
+	const FBox Bounds = GetStructureBounds();
+	const FVector Start(Bounds.GetCenter().X, Bounds.GetCenter().Y, Bounds.Max.Z + 5.0);
+	const FVector End = Start + FVector(0.0, 0.0, EMBBuildingDefaults::ShelterTraceHeight);
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(EMBShelterTrace), /*bTraceComplex*/ false, this);
+	FHitResult Hit;
+	return World->LineTraceSingleByChannel(Hit, Start, End, ECC_GameTraceChannel2, Params) && Cast<AEMBBuildablePiece>(Hit.GetActor()) != nullptr;
+}
+
+bool AEMBBuildablePiece::CanInteract(const APawn* InInstigator) const
+{
+	// Serveur et client (invite d'interface) : n'importe quel joueur vivant avec un PlayerState peut se lier.
+	return bIsRespawnPoint && !bCollapsed && InInstigator && InInstigator->GetPlayerState();
+}
+
+FText AEMBBuildablePiece::GetInteractionText(const APawn* InInstigator) const
+{
+	if (IsBed())
+	{
+		return NSLOCTEXT("Emberfall", "BindAndSleep", "Se lier au lit et dormir");
+	}
+	return NSLOCTEXT("Emberfall", "BindRespawnPoint", "Se lier à ce point de réapparition");
+}
+
+void AEMBBuildablePiece::Interact(APawn* InInstigator)
+{
+	if (!HasAuthority() || !CanInteract(InInstigator))
+	{
+		return;
+	}
+
+	UEMBRespawnSubsystem* Respawn = UEMBRespawnSubsystem::Get(this);
+
+	// Le dernier lien remplace le précédent (géré par le sous-système). La liaison est instantanée et illimitée.
+	if (Respawn)
+	{
+		Respawn->BindRespawnPoint(InInstigator->GetPlayerState(), this);
+	}
+
+	// Une seule interaction : se lier ET dormir. Dormir réduit la Corruption, mais seulement à l'abri et au plus une
+	// fois toutes les 120 s par joueur (sinon un lit deviendrait un purificateur illimité).
+	if (IsBed() && IsSheltered())
+	{
+		if (UEMBSurvivalComponent* Survival = InInstigator->FindComponentByClass<UEMBSurvivalComponent>())
+		{
+			if (Respawn && Respawn->TryConsumeSleepBenefit(InInstigator->GetController()))
+			{
+				Survival->ReduceCorruption(EMBBuildingDefaults::BedCorruptionReduction);
+			}
+		}
+	}
+}
+
 void AEMBBuildablePiece::RestoreFromSave(float InHealth, const FString& InPlacerStableId)
 {
 	if (!HasAuthority())
@@ -120,6 +237,9 @@ void AEMBBuildablePiece::BeginPlay()
 
 	if (HasAuthority())
 	{
+		// Chaleur / purification : enregistrées auprès du sous-système d'environnement (serveur seulement).
+		RegisterEnvironmentFunctions();
+
 		// Dormance totale : le moteur effectue d'abord la réplication initiale vers les clients concernés, puis
 		// l'acteur s'endort. Indispensable pour tenir des milliers de pièces (voir l'en-tête de classe).
 		SetNetDormancy(DORM_DormantAll);
@@ -128,6 +248,8 @@ void AEMBBuildablePiece::BeginPlay()
 
 void AEMBBuildablePiece::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	UnregisterEnvironmentFunctions();
+
 	if (UEMBStructureSubsystem* Structure = UEMBStructureSubsystem::Get(this))
 	{
 		// Recalcul des voisins seulement si la pièce disparaît réellement en cours de partie
@@ -148,6 +270,7 @@ void AEMBBuildablePiece::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME_CONDITION(AEMBBuildablePiece, Category, COND_InitialOnly);
 	DOREPLIFETIME_CONDITION(AEMBBuildablePiece, bAnchoredToGround, COND_InitialOnly);
 	DOREPLIFETIME_CONDITION(AEMBBuildablePiece, PlacerPlayerId, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(AEMBBuildablePiece, bIsRespawnPoint, COND_InitialOnly);
 
 	// État dynamique : ne part que lorsque le serveur réveille la pièce (FlushNetDormancy).
 	DOREPLIFETIME(AEMBBuildablePiece, CurrentHealth);
@@ -349,6 +472,9 @@ void AEMBBuildablePiece::ExecuteCollapse(bool bHeavyDebris)
 	bCollapsed = true;
 	Integrity = 0.f;
 	CurrentHealth = 0.f;
+
+	// Un feu effondré ne chauffe plus et un brasero effondré ne purifie plus, même pendant le délai avant destruction.
+	UnregisterEnvironmentFunctions();
 
 	// Côté serveur la collision disparaît tout de suite : les requêtes de placement et les déplacements
 	// ne doivent plus tenir compte de la pièce, même pendant le délai avant destruction.

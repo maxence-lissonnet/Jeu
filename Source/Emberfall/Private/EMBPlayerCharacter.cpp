@@ -5,18 +5,26 @@
 #include "EMBBuildingComponent.h"
 #include "EMBCharacterMovementComponent.h"
 #include "EMBCombatComponent.h"
+#include "EMBGameMode.h"
+#include "EMBGameplayTags.h"
 #include "EMBInventoryComponent.h"
 #include "EMBPlayerState.h"
 #include "EMBProgressionComponent.h"
 #include "EMBStatsComponent.h"
+#include "EMBSurvivalComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/LocalPlayer.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "CollisionQueryParams.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "Net/UnrealNetwork.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
@@ -41,6 +49,17 @@ AEMBPlayerCharacter::AEMBPlayerCharacter(const FObjectInitializer& ObjectInitial
 
 	MappingContextPriority = 0;
 	LastConfirmPlacementTime = -1.0;
+
+	bRespawnRequiresNoLivingAlly = false; // Arbitrage du chef : tout joueur mort peut réapparaître dès 3 s.
+	bDeadAwaitingRespawn = false;
+	DeathServerTime = 0.0;
+	bLocalHolding = false;
+	LocalHoldStartTime = 0.0;
+	LocalHoldDuration = 0.f;
+	HoldStartTime = 0.0;
+	HoldDuration = 0.f;
+	InteractWindowStart = 0.0;
+	InteractRequestCount = 0;
 
 	// Le personnage s'oriente selon son déplacement, la caméra selon la souris.
 	bUseControllerRotationPitch = false;
@@ -77,6 +96,8 @@ AEMBPlayerCharacter::AEMBPlayerCharacter(const FObjectInitializer& ObjectInitial
 	Combat = CreateDefaultSubobject<UEMBCombatComponent>(TEXT("Combat"));
 	Inventory = CreateDefaultSubobject<UEMBInventoryComponent>(TEXT("Inventory"));
 	Building = CreateDefaultSubobject<UEMBBuildingComponent>(TEXT("Building"));
+	Survival = CreateDefaultSubobject<UEMBSurvivalComponent>(TEXT("Survival"));
+	QuickConsumableId = TEXT("HealingFlask");
 }
 
 void AEMBPlayerCharacter::BeginPlay()
@@ -153,7 +174,11 @@ void AEMBPlayerCharacter::TryConfirmPlacement()
 
 void AEMBPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	GetWorldTimerManager().ClearTimer(SprintDrainTimerHandle);
+	FTimerManager& TimerManager = GetWorldTimerManager();
+	TimerManager.ClearTimer(SprintDrainTimerHandle);
+	TimerManager.ClearTimer(AutoRespawnTimerHandle);
+	TimerManager.ClearTimer(InteractionScanTimerHandle);
+	TimerManager.ClearTimer(InteractionHoldTimerHandle);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -164,6 +189,13 @@ void AEMBPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AEMBPlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
+
+	// Recherche de la cible d'interaction : uniquement pour le joueur local, 7 fois par seconde (pas de Tick).
+	// Démarrée ici (et non au BeginPlay) car le contrôle local n'est connu qu'à la prise de contrôle.
+	if (IsLocallyControlled())
+	{
+		GetWorldTimerManager().SetTimer(InteractionScanTimerHandle, this, &AEMBPlayerCharacter::UpdateInteractionTarget, 0.15f, true);
+	}
 
 	// Appelé sur le client qui contrôle ce pawn (et sur l'hôte d'une partie listen) à chaque (re)prise de contrôle :
 	// c'est le bon endroit pour installer le contexte de mapping. Jamais appelé sur un serveur dédié.
@@ -252,6 +284,21 @@ void AEMBPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	{
 		Input->BindAction(CancelAction, ETriggerEvent::Started, this, &AEMBPlayerCharacter::OnCancel);
 	}
+	if (InteractAction)
+	{
+		// Started = début (ou interaction instantanée) ; Completed/Canceled = relâchement d'un maintien.
+		Input->BindAction(InteractAction, ETriggerEvent::Started, this, &AEMBPlayerCharacter::OnInteractStarted);
+		Input->BindAction(InteractAction, ETriggerEvent::Completed, this, &AEMBPlayerCharacter::OnInteractCompleted);
+		Input->BindAction(InteractAction, ETriggerEvent::Canceled, this, &AEMBPlayerCharacter::OnInteractCompleted);
+	}
+	if (RespawnAction)
+	{
+		Input->BindAction(RespawnAction, ETriggerEvent::Started, this, &AEMBPlayerCharacter::OnRespawnPressed);
+	}
+	if (QuickConsumeAction)
+	{
+		Input->BindAction(QuickConsumeAction, ETriggerEvent::Started, this, &AEMBPlayerCharacter::OnQuickConsumePressed);
+	}
 }
 
 bool AEMBPlayerCharacter::IsInBuildMode() const
@@ -276,7 +323,7 @@ void AEMBPlayerCharacter::OnMove(const FInputActionValue& Value)
 
 	// Étourdi ou mort : aucun contrôle du déplacement.
 	const EEMBCombatState State = Combat->GetCurrentState();
-	if (State == EEMBCombatState::Staggered || State == EEMBCombatState::Dead)
+	if (State == EEMBCombatState::Staggered || State == EEMBCombatState::Dead || bDeadAwaitingRespawn)
 	{
 		return;
 	}
@@ -394,12 +441,280 @@ void AEMBPlayerCharacter::HandleCombatStateChanged(EEMBCombatState OldState, EEM
 
 	if (NewState == EEMBCombatState::Dead)
 	{
+		// Immédiat sur toutes les machines. On ne coupe PAS les entrées du contrôleur (DisableInput) : le joueur
+		// mort doit encore pouvoir demander sa réapparition. Les actions de jeu sont refusées par le combat
+		// (état Dead) et par les gardes des callbacks ci-dessous.
 		GetCharacterMovement()->DisableMovement();
-		if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+
+		if (HasAuthority())
 		{
-			DisableInput(PlayerController);
+			BeginDeath();
 		}
 	}
+}
+
+// ================================================================================================
+// Mort, réapparition, réanimation
+// ================================================================================================
+
+void AEMBPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AEMBPlayerCharacter, bDeadAwaitingRespawn);
+	DOREPLIFETIME(AEMBPlayerCharacter, DeathServerTime);
+}
+
+void AEMBPlayerCharacter::GetOwnedGameplayTags(FGameplayTagContainer& TagContainer) const
+{
+	if (bDeadAwaitingRespawn)
+	{
+		TagContainer.AddTag(EMBTags::State_Player_DeadAwaitingRespawn.GetTag());
+	}
+	if (Survival && Survival->HasWhispers())
+	{
+		TagContainer.AddTag(EMBTags::State_Survival_Whispers.GetTag()); // Corruption >= 25.
+	}
+	if (Combat)
+	{
+		// Tags d'état du combat, dérivés de l'état courant (pas de duplication de données).
+		if (Combat->HasStateTag(EMBTags::State_Combat_Invulnerable.GetTag()))
+		{
+			TagContainer.AddTag(EMBTags::State_Combat_Invulnerable.GetTag());
+		}
+		if (Combat->HasStateTag(EMBTags::State_Combat_HyperArmor.GetTag()))
+		{
+			TagContainer.AddTag(EMBTags::State_Combat_HyperArmor.GetTag());
+		}
+		if (Combat->HasStateTag(EMBTags::State_Combat_Staggered.GetTag()))
+		{
+			TagContainer.AddTag(EMBTags::State_Combat_Staggered.GetTag());
+		}
+		if (Combat->HasStateTag(EMBTags::State_Dead.GetTag()))
+		{
+			TagContainer.AddTag(EMBTags::State_Dead.GetTag());
+		}
+	}
+}
+
+void AEMBPlayerCharacter::BeginDeath()
+{
+	if (!HasAuthority() || bDeadAwaitingRespawn || !GetWorld())
+	{
+		return;
+	}
+
+	ServerEndInteractionHold(false); // Un mort n'interagit plus.
+
+	// Zone létale = coup fatal marqué bLethalZone (lave, vide) ou chute hors du monde : le corps, donc le sac,
+	// y serait inaccessible. Faim, froid, brûlure, intoxication : le sac reste sur place. Lu par RespawnPlayer.
+	bKilledInLethalZone = bFellOutOfWorld || (Combat && Combat->WasKilledInLethalZone());
+
+	bDeadAwaitingRespawn = true;
+	DeathServerTime = GetWorld()->GetTimeSeconds();
+	ApplyDeadState(true);
+
+	// Réapparition automatique à 30 s : c'est la fenêtre pendant laquelle un allié peut réanimer.
+	GetWorldTimerManager().SetTimer(AutoRespawnTimerHandle, this, &AEMBPlayerCharacter::RespawnNow, EMBCombatDefaults::RespawnAutoDelay, false);
+
+	OnDeadAwaitingRespawnChanged.Broadcast(true);
+	ForceNetUpdate();
+}
+
+void AEMBPlayerCharacter::EndDeathByRevive()
+{
+	if (!HasAuthority() || !bDeadAwaitingRespawn)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(AutoRespawnTimerHandle);
+	bDeadAwaitingRespawn = false;
+	ApplyDeadState(false);
+	OnDeadAwaitingRespawnChanged.Broadcast(false);
+	ForceNetUpdate();
+}
+
+void AEMBPlayerCharacter::ApplyDeadState(bool bDead)
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (bDead)
+	{
+		ForceStopSprint();
+		Movement->DisableMovement();
+		SetInteractionTarget(nullptr, FText::GetEmpty());
+	}
+	else
+	{
+		Movement->SetMovementMode(MOVE_Walking);
+	}
+}
+
+void AEMBPlayerCharacter::OnRep_DeadAwaitingRespawn()
+{
+	ApplyDeadState(bDeadAwaitingRespawn);
+	OnDeadAwaitingRespawnChanged.Broadcast(bDeadAwaitingRespawn);
+}
+
+void AEMBPlayerCharacter::FellOutOfWorld(const UDamageType& DamageType)
+{
+	// Le comportement de base détruit le pawn sur-le-champ : plus de sac, plus de réapparition propre.
+	// On tue donc par le flux normal (OnDeath -> état Dead -> attente de réapparition). Le mouvement coupé
+	// (ApplyDeadState) arrête la chute ; le moteur rappelle cette fonction à chaque tick sous la KillZ, d'où la garde.
+	if (!HasAuthority() || !Stats)
+	{
+		Super::FellOutOfWorld(DamageType);
+		return;
+	}
+	if (bFellOutOfWorld || bDeadAwaitingRespawn || Stats->IsDead())
+	{
+		return;
+	}
+
+	bFellOutOfWorld = true;
+	Stats->ApplyDamage(Stats->GetHealth() + 1.f, nullptr);
+}
+
+float AEMBPlayerCharacter::GetAutoRespawnTimeRemaining() const
+{
+	const UWorld* World = GetWorld();
+	if (!bDeadAwaitingRespawn || !World)
+	{
+		return 0.f;
+	}
+	// Horloge serveur estimée côté client (GameState) ; sur le serveur, l'horloge monde.
+	const AGameStateBase* GameState = World->GetGameState();
+	const double Now = GameState ? GameState->GetServerWorldTimeSeconds() : World->GetTimeSeconds();
+	return static_cast<float>(FMath::Max(0.0, DeathServerTime + EMBCombatDefaults::RespawnAutoDelay - Now));
+}
+
+void AEMBPlayerCharacter::RespawnNow()
+{
+	if (!HasAuthority() || !bDeadAwaitingRespawn)
+	{
+		return;
+	}
+	GetWorldTimerManager().ClearTimer(AutoRespawnTimerHandle);
+
+	// Le mode de jeu dépose le sac, choisit le point, détruit CE pawn et en crée un nouveau.
+	if (AEMBGameMode* GameMode = GetWorld()->GetAuthGameMode<AEMBGameMode>())
+	{
+		if (AController* OwnerController = GetController())
+		{
+			GameMode->RespawnPlayer(OwnerController);
+		}
+	}
+}
+
+bool AEMBPlayerCharacter::HasLivingAlly() const
+{
+	const UWorld* World = GetWorld();
+	const AGameStateBase* GameState = World ? World->GetGameState() : nullptr;
+	if (!GameState)
+	{
+		return false;
+	}
+	for (const APlayerState* Other : GameState->PlayerArray)
+	{
+		const AEMBPlayerCharacter* OtherCharacter = Other ? Cast<AEMBPlayerCharacter>(Other->GetPawn()) : nullptr;
+		if (OtherCharacter && OtherCharacter != this && !OtherCharacter->bDeadAwaitingRespawn)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void AEMBPlayerCharacter::RequestRespawn()
+{
+	// Client -> serveur. Sur un hôte, la RPC s'exécute localement.
+	if (bDeadAwaitingRespawn)
+	{
+		Server_RequestRespawn();
+	}
+}
+
+bool AEMBPlayerCharacter::Server_RequestRespawn_Validate()
+{
+	return true;
+}
+
+void AEMBPlayerCharacter::Server_RequestRespawn_Implementation()
+{
+	if (!bDeadAwaitingRespawn || !GetWorld())
+	{
+		return;
+	}
+
+	const double Elapsed = GetWorld()->GetTimeSeconds() - DeathServerTime;
+	if (Elapsed < EMBCombatDefaults::RespawnMinDelay)
+	{
+		return; // Trop tôt : évite une réapparition par appui réflexe, et laisse le temps de voir la mort.
+	}
+
+	// Solo ou sans allié vivant (personne ne peut réanimer) : réapparition possible dès 3 s. Avec un allié
+	// vivant, on attend l'échéance automatique de 30 s pour lui laisser le temps de réanimer.
+	if (bRespawnRequiresNoLivingAlly && HasLivingAlly() && Elapsed < EMBCombatDefaults::RespawnAutoDelay)
+	{
+		return;
+	}
+	RespawnNow();
+}
+
+void AEMBPlayerCharacter::OnRespawnPressed()
+{
+	RequestRespawn();
+}
+
+void AEMBPlayerCharacter::OnQuickConsumePressed()
+{
+	// Le serveur valide tout (stock, délai de 1 s, plafond de requêtes) ; ici on ne filtre que l'évident.
+	if (Survival && !QuickConsumableId.IsNone() && !bDeadAwaitingRespawn)
+	{
+		Survival->RequestConsume(QuickConsumableId);
+	}
+}
+
+// ================================================================================================
+// Réanimation (IEMBInteractable)
+// ================================================================================================
+
+bool AEMBPlayerCharacter::CanInteract(const APawn* InInstigator) const
+{
+	// Serveur et client (invite) : un joueur mort en attente, réanimable par un autre joueur vivant.
+	// Le PlayerState sert de critère "contrôlé par un joueur" : IsPlayerControlled() dépend du contrôleur,
+	// qui n'existe pas chez les clients distants.
+	const AEMBPlayerCharacter* Rescuer = Cast<AEMBPlayerCharacter>(InInstigator);
+	return bDeadAwaitingRespawn
+		&& Rescuer && Rescuer != this
+		&& !Rescuer->bDeadAwaitingRespawn
+		&& Rescuer->GetPlayerState() != nullptr && GetPlayerState() != nullptr;
+}
+
+void AEMBPlayerCharacter::Interact(APawn* InInstigator)
+{
+	// Serveur uniquement. Revérifie : l'état peut avoir changé pendant les 4 s de maintien.
+	if (!HasAuthority() || !CanInteract(InInstigator) || !Stats || !Combat)
+	{
+		return;
+	}
+
+	// Réanimé : pas de sac (il n'est déposé qu'à la réapparition), inventaire intact.
+	Stats->ReviveWithFraction(EMBCombatDefaults::ReviveHealthFraction, EMBCombatDefaults::ReviveStaminaFraction);
+	if (Survival)
+	{
+		Survival->ApplyReviveValues(); // Mort par Corruption : plafonnée à 60 ; intoxication purgée (sinon mort immédiate).
+	}
+	bKilledInLethalZone = false;
+	bFellOutOfWorld = false;
+	Combat->ResetFromDeath();
+	Combat->GrantSpawnProtection(EMBCombatDefaults::SpawnProtectionDuration);
+	EndDeathByRevive();
+}
+
+FText AEMBPlayerCharacter::GetInteractionText(const APawn* InInstigator) const
+{
+	return NSLOCTEXT("EMBPlayer", "Revive", "Réanimer");
 }
 
 // ================================================================================================
@@ -438,7 +753,7 @@ bool AEMBPlayerCharacter::IsSprinting() const
 void AEMBPlayerCharacter::OnSprintStarted()
 {
 	UEMBCharacterMovementComponent* Movement = GetEMBMovement();
-	if (!Movement || !Stats || !Stats->CanAffordStamina() || IsInBuildMode())
+	if (!Movement || !Stats || !Stats->CanAffordStamina() || IsInBuildMode() || bDeadAwaitingRespawn)
 	{
 		return;
 	}
@@ -538,5 +853,270 @@ void AEMBPlayerCharacter::DrainSprintStamina()
 	if (!Stats->CanAffordStamina())
 	{
 		ForceStopSprint(); // Endurance à 0 : arrêt forcé, serveur et client propriétaire.
+	}
+}
+
+// ================================================================================================
+// Interaction
+// ================================================================================================
+
+namespace
+{
+	/** Marge (cm) ajoutée à la portée côté serveur : le joueur a pu bouger entre la requête et son arrivée. */
+	constexpr float InteractServerTolerance = 50.f;
+
+	/** Plafond de requêtes d'interaction par seconde et par joueur (au-delà : ignorées, sans déconnexion). */
+	constexpr int32 MaxInteractRequestsPerSecond = 10;
+
+	/** Un maintien se termine un peu avant l'échéance exacte : le contrôle serveur ne tombe qu'aux multiples de 0,25 s. */
+	constexpr double HoldCompletionSlack = 0.05;
+}
+
+float AEMBPlayerCharacter::DistanceToInteractable(const AActor* Target) const
+{
+	if (!Target)
+	{
+		return TNumericLimits<float>::Max();
+	}
+
+	// Point de collision le plus proche : une grande pièce (lit, établi) est "près" dès que son bord l'est,
+	// pas seulement son centre. Sans collision exploitable, on retombe sur la distance au centre.
+	FVector Closest;
+	const float Distance = Target->ActorGetDistanceToCollision(GetActorLocation(), ECC_Pawn, Closest);
+	return Distance >= 0.f ? Distance : FVector::Dist(GetActorLocation(), Target->GetActorLocation());
+}
+
+bool AEMBPlayerCharacter::CanActNow() const
+{
+	if (!Combat || !Stats || bDeadAwaitingRespawn || Stats->IsDead())
+	{
+		return false;
+	}
+	const EEMBCombatState State = Combat->GetCurrentState();
+	return State != EEMBCombatState::Dead && State != EEMBCombatState::Staggered;
+}
+
+void AEMBPlayerCharacter::UpdateInteractionTarget()
+{
+	AActor* Best = nullptr;
+	FText BestPrompt;
+
+	const UWorld* World = GetWorld();
+	if (World && CanActNow() && !IsInBuildMode())
+	{
+		/*
+		 * COÛT : un recouvrement sphérique de 250 cm, 7 fois par seconde, uniquement pour le joueur local.
+		 * Il renvoie les composants de tous types d'objets proches ; on ne garde que les acteurs qui
+		 * implémentent IEMBInteractable (test de cast, très bon marché). Le serveur n'exécute jamais ce balayage.
+		 */
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(EMBInteractScan), /*bTraceComplex=*/false, this);
+		TArray<FOverlapResult> Overlaps;
+		// Types utiles seulement (joueurs mort, sacs, pièces construites) : on évite physique, destructibles, etc.
+		FCollisionObjectQueryParams ObjectTypes;
+		ObjectTypes.AddObjectTypesToQuery(ECC_Pawn);
+		ObjectTypes.AddObjectTypesToQuery(ECC_WorldDynamic);
+		ObjectTypes.AddObjectTypesToQuery(ECC_WorldStatic);
+		World->OverlapMultiByObjectType(
+			Overlaps, GetActorLocation(), FQuat::Identity, ObjectTypes,
+			FCollisionShape::MakeSphere(EMBCombatDefaults::InteractRange), Params);
+
+		const FVector ViewOrigin = Camera ? Camera->GetComponentLocation() : GetActorLocation();
+		const FVector ViewDirection = Camera ? Camera->GetForwardVector() : GetActorForwardVector();
+
+		TSet<const AActor*> Seen;
+		float BestScore = -TNumericLimits<float>::Max();
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			AActor* Candidate = Overlap.GetActor();
+			if (!Candidate || Seen.Contains(Candidate))
+			{
+				continue;
+			}
+			Seen.Add(Candidate);
+
+			const IEMBInteractable* Interactable = Cast<IEMBInteractable>(Candidate);
+			if (!Interactable || !Interactable->CanInteract(this))
+			{
+				continue;
+			}
+
+			// Préférence à ce qui est face à la caméra, à égalité à ce qui est le plus proche. Rien n'est exclu :
+			// un objet dans le dos reste utilisable s'il est seul.
+			const float Facing = FVector::DotProduct(ViewDirection, (Candidate->GetActorLocation() - ViewOrigin).GetSafeNormal());
+			const float Closeness = DistanceToInteractable(Candidate) / EMBCombatDefaults::InteractRange;
+			const float Score = Facing - Closeness * 0.25f;
+			if (Score > BestScore)
+			{
+				BestScore = Score;
+				Best = Candidate;
+				BestPrompt = Interactable->GetInteractionText(this);
+			}
+		}
+	}
+
+	SetInteractionTarget(Best, BestPrompt);
+}
+
+void AEMBPlayerCharacter::SetInteractionTarget(AActor* NewTarget, const FText& NewPrompt)
+{
+	if (InteractionTarget.Get() == NewTarget && InteractionPrompt.EqualTo(NewPrompt))
+	{
+		return;
+	}
+	InteractionTarget = NewTarget;
+	InteractionPrompt = NewPrompt;
+	OnInteractionTargetChanged.Broadcast(NewTarget, NewPrompt);
+}
+
+float AEMBPlayerCharacter::GetInteractionHoldProgress() const
+{
+	const UWorld* World = GetWorld();
+	if (!bLocalHolding || !World || LocalHoldDuration <= KINDA_SMALL_NUMBER)
+	{
+		return 0.f;
+	}
+	return FMath::Clamp(static_cast<float>(World->GetTimeSeconds() - LocalHoldStartTime) / LocalHoldDuration, 0.f, 1.f);
+}
+
+void AEMBPlayerCharacter::OnInteractStarted()
+{
+	// Mort : la même touche demande la réapparition (refusée par le serveur avant 3 s).
+	if (bDeadAwaitingRespawn)
+	{
+		RequestRespawn();
+		return;
+	}
+
+	AActor* Target = InteractionTarget.Get();
+	const IEMBInteractable* Interactable = Cast<IEMBInteractable>(Target);
+	if (!Interactable || !GetWorld())
+	{
+		return;
+	}
+
+	// Maintien : on garde une estimation locale pour la barre de progression ; le serveur fait foi.
+	const float HoldTime = Interactable->GetInteractionHoldTime();
+	if (HoldTime > 0.f)
+	{
+		bLocalHolding = true;
+		LocalHoldStartTime = GetWorld()->GetTimeSeconds();
+		LocalHoldDuration = HoldTime;
+	}
+	Server_Interact(Target);
+}
+
+void AEMBPlayerCharacter::OnInteractCompleted()
+{
+	// Relâchement : on ne prévient le serveur que si un maintien était en cours (pas de RPC inutile).
+	if (bLocalHolding)
+	{
+		bLocalHolding = false;
+		Server_CancelInteract();
+		OnInteractionHoldEnded.Broadcast(false);
+	}
+}
+
+bool AEMBPlayerCharacter::Server_Interact_Validate(AActor* Target)
+{
+	return true; // Le serveur revérifie tout dans l'implémentation ; une cible périmée n'est pas une triche.
+}
+
+void AEMBPlayerCharacter::Server_Interact_Implementation(AActor* Target)
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	// Anti-inondation : au-delà de 10 requêtes par seconde, on ignore sans punir.
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - InteractWindowStart >= 1.0)
+	{
+		InteractWindowStart = Now;
+		InteractRequestCount = 0;
+	}
+	if (++InteractRequestCount > MaxInteractRequestsPerSecond)
+	{
+		return;
+	}
+
+	// Une nouvelle demande remplace un maintien précédent (sans prévenir le client : il vient de le relancer).
+	GetWorldTimerManager().ClearTimer(InteractionHoldTimerHandle);
+	HoldTarget.Reset();
+
+	IEMBInteractable* Interactable = IsValid(Target) ? Cast<IEMBInteractable>(Target) : nullptr;
+	const bool bValid = Interactable
+		&& CanActNow()
+		&& DistanceToInteractable(Target) <= EMBCombatDefaults::InteractRange + InteractServerTolerance
+		&& Interactable->CanInteract(this);
+	if (!bValid)
+	{
+		Client_InteractionEnded(false);
+		return;
+	}
+
+	const float HoldTime = Interactable->GetInteractionHoldTime();
+	if (HoldTime <= 0.f)
+	{
+		Interactable->Interact(this); // Interaction instantanée.
+		return;
+	}
+
+	// Maintien : le serveur chronomètre et surveille (portée, vivant, non étourdi, cible toujours valide)
+	// toutes les 0,25 s. Le client ne décide jamais de la fin.
+	HoldTarget = Target;
+	HoldStartTime = Now;
+	HoldDuration = HoldTime;
+	GetWorldTimerManager().SetTimer(InteractionHoldTimerHandle, this, &AEMBPlayerCharacter::ServerTickInteractionHold,
+		EMBCombatDefaults::InteractHoldCheckInterval, true);
+}
+
+void AEMBPlayerCharacter::Server_CancelInteract_Implementation()
+{
+	ServerEndInteractionHold(false);
+}
+
+void AEMBPlayerCharacter::ServerTickInteractionHold()
+{
+	AActor* Target = HoldTarget.Get();
+	IEMBInteractable* Interactable = IsValid(Target) ? Cast<IEMBInteractable>(Target) : nullptr;
+	if (!Interactable
+		|| !CanActNow()
+		|| DistanceToInteractable(Target) > EMBCombatDefaults::InteractRange + InteractServerTolerance
+		|| !Interactable->CanInteract(this))
+	{
+		ServerEndInteractionHold(false); // S'éloigne, meurt, est étourdi ou la cible n'est plus valide.
+		return;
+	}
+
+	if (GetWorld()->GetTimeSeconds() - HoldStartTime >= HoldDuration - HoldCompletionSlack)
+	{
+		// Pendant le maintien la tolérance est large (50 cm) ; à l'instant de la réussite, la portée est stricte.
+		if (DistanceToInteractable(Target) > EMBCombatDefaults::InteractRange)
+		{
+			ServerEndInteractionHold(false);
+			return;
+		}
+		Interactable->Interact(this);
+		ServerEndInteractionHold(true);
+	}
+}
+
+void AEMBPlayerCharacter::ServerEndInteractionHold(bool bCompleted)
+{
+	GetWorldTimerManager().ClearTimer(InteractionHoldTimerHandle);
+	if (HoldTarget.IsValid())
+	{
+		HoldTarget.Reset();
+		Client_InteractionEnded(bCompleted); // Remet à zéro la barre de progression du joueur.
+	}
+}
+
+void AEMBPlayerCharacter::Client_InteractionEnded_Implementation(bool bCompleted)
+{
+	if (bLocalHolding)
+	{
+		bLocalHolding = false;
+		OnInteractionHoldEnded.Broadcast(bCompleted);
 	}
 }

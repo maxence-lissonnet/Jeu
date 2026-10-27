@@ -42,6 +42,23 @@ void UEMBInventoryComponent::ExportResources(TArray<FEMBResourceStack>& OutResou
 	OutResources = Resources;
 }
 
+void UEMBInventoryComponent::RemoveAllResources(TArray<FEMBResourceStack>& OutResources)
+{
+	OutResources.Reset();
+	if (!HasAuthorityOwner())
+	{
+		return;
+	}
+
+	// Déplacement complet vers le sac de mort : le contenu quitte l'inventaire en une seule opération, sans état
+	// intermédiaire où des ressources existeraient à la fois dans l'inventaire et dans le sac.
+	OutResources = MoveTemp(Resources);
+	Resources.Reset();
+
+	// Rafraîchissement global (HUD, encombrement) ; les clients le reçoivent par OnRep_Resources.
+	OnInventoryChanged.Broadcast(NAME_None, 0);
+}
+
 void UEMBInventoryComponent::ImportResources(const TArray<FEMBResourceStack>& InResources)
 {
 	if (!HasAuthorityOwner())
@@ -112,10 +129,45 @@ float UEMBInventoryComponent::GetUnitWeight(FName ResourceId)
 		{ TEXT("MoonSilver"), 1.f },
 		{ TEXT("DragonScale"), 2.f },
 		{ TEXT("DragonBone"), 3.f },
-		{ TEXT("EmberHeart"), 5.f }
+		{ TEXT("EmberHeart"), 5.f },
+		// Consommables (référentiel 10.3)
+		{ TEXT("Berries"), 0.1f },
+		{ TEXT("RawMeat"), 0.5f },
+		{ TEXT("CookedMeat"), 0.5f },
+		{ TEXT("Stew"), 0.8f },
+		{ TEXT("BoiledWater"), 0.5f },
+		{ TEXT("HealingFlask"), 0.3f },
+		{ TEXT("Antidote"), 0.2f },
+		{ TEXT("CorruptionTonic"), 0.3f },
+		{ TEXT("FireResistOil"), 0.3f }
 	};
 	const float* Weight = UnitWeights.Find(ResourceId);
 	return Weight ? *Weight : 0.f;
+}
+
+void UEMBInventoryComponent::SanitizeResourceList(TArray<FEMBResourceStack>& InOutResources, int32 InMaxStack)
+{
+	constexpr int32 MaxDistinct = 32;
+	TArray<FEMBResourceStack> Clean;
+	for (const FEMBResourceStack& In : InOutResources)
+	{
+		if (In.ResourceId.IsNone() || In.Count <= 0 || GetUnitWeight(In.ResourceId) <= 0.f)
+		{
+			continue;
+		}
+		FEMBResourceStack* Existing = Clean.FindByPredicate([&In](const FEMBResourceStack& Entry) { return Entry.ResourceId == In.ResourceId; });
+		if (Existing)
+		{
+			Existing->Count = static_cast<int32>(FMath::Min<int64>(static_cast<int64>(Existing->Count) + In.Count, InMaxStack));
+		}
+		else if (Clean.Num() < MaxDistinct)
+		{
+			FEMBResourceStack& Added = Clean.AddDefaulted_GetRef();
+			Added.ResourceId = In.ResourceId;
+			Added.Count = FMath::Min(In.Count, InMaxStack);
+		}
+	}
+	InOutResources = MoveTemp(Clean);
 }
 
 float UEMBInventoryComponent::GetCurrentWeight() const

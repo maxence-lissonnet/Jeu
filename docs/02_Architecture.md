@@ -1,6 +1,7 @@
 # Emberfall — Architecture du module C++
 
-> **Statut :** v1.2 (23/10/2026), mise à jour après le codage de la **progression** et de la **sauvegarde**, à partir d'une relecture du code du module `Emberfall` (`Source/Emberfall/Public` et `Private` : 35 en-têtes, 29 `.cpp`, environ 16 900 lignes) et du référentiel v1.2 (§ 7 et 8). **Le code n'a jamais été compilé** : ce document décrit ce qui est écrit, pas un comportement mesuré.
+> **Statut :** v1.3 (27/10/2026), mise à jour après le codage de la **mort / réapparition / réanimation**, de la **survie**, des **boss 1 et 2** et de la **sauvegarde v2**, à partir d'une relecture des en-têtes (et des `.cpp` pour les séquences) du module `Emberfall` (`Source/Emberfall/Public` et `Private` : 55 en-têtes, 47 `.cpp`, environ 26 700 lignes) et du référentiel v1.3 (§ 8 à 11). **Le code n'a jamais été compilé** : ce document décrit ce qui est écrit, pas un comportement mesuré.
+> **Changements v1.2 → v1.3 :** mort et réapparition (`IEMBInteractable`, `AEMBDeathBag`, `UEMBRespawnSubsystem`, `AEMBGameMode::RespawnPlayer`, attente de réapparition et réanimation dans `AEMBPlayerCharacter`, `ReviveWithFraction` / `SetSurvivalModifiers` dans les jauges, `ResetFromDeath` / `GrantSpawnProtection` / `SetExtraFireResistance` dans le combat, `FEMBHitData::CorruptionAmount`, pièces « point de réapparition », lit « Dormir ») ; survie (`UEMBSurvivalComponent`, `UEMBEnvironmentSubsystem`, `AEMBEnvironmentVolume`, `EMBSurvivalTypes.h`, `Data/DT_Consumables.csv`, sources de chaleur et purificateurs sur les pièces) ; boss (`AEMBBossBase`, `AEMBBossAIController`, `EMBBossTags`, dragon refactoré en classe fille, `AEMBColossusBoss` + `AEMBColossusArena` / `AEMBObelisk` + `BTTask_EMBColossusCharge`, `AEMBSeraphBoss` + `AEMBSeraphShadow` + `AEMBSeraphArena` / `AEMBSeraphBell` + `AEMBProjectile` poolé + `BTTask_EMBSeraphDash` / `Plunge` / `Reposition`, abandon de rencontre après 30 s de wipe) ; sauvegarde **format 2** (survie, liaison de réapparition, sacs, itération sur `AEMBBossBase`, report plafonné à 300 s, résultat de migration à trois valeurs) ; canal de collision `EMBProjectile`. Sections réécrites ou ajoutées : 0, 1, 2.1, 2.2, 2.9, 2.10, 2.11 à 2.15 (nouvelles), 3, 4 (4.4 à 4.6 nouvelles), 5.3, 6, 7, 8 (8.4 nouvelle), 9 (9.5 nouvelle), 10.
 > **Changements v1.1 → v1.2 :** classes `AEMBGameMode`, `AEMBPlayerState`, `UEMBProgressionComponent`, `UEMBProgressionSubsystem`, `UEMBProgressionSettings`, `AEMBDiscoveryVolume`, `UEMBSaveSubsystem`, `UEMBSaveGame` et types `EMBSaveTypes.h` ; ajouts dans le combat (`SetPassiveModifiers`), les jauges (`RestoreFromSave`), la construction (multiplicateur de coût, colonne `RequiredGlyph`, `IsPieceUnlocked` branché), l'inventaire (bonus de charge, export/import), la structure (`BeginBulkLoad` / `EndBulkLoad`), le dragon (`NotifyWorldEvent`, `IsEncounterActive`, `ApplyDefeatedFromSave`, `OnEncounterEnded`) et l'arène (état final calme). Données : `Data/DT_SkillNodes.csv`, colonne `RequiredGlyph` de `DT_BuildPieces.csv`, réglages dans `Config/DefaultGame.ini`. Décision utilisateur : **un acteur répliqué par pièce pour la v1** (le Fast Array reste une évolution). Sections réécrites : 0, 1, 2.1, 2.7 à 2.10 (nouvelles), 3, 5, 6, 7, 8, 9, 10.
 > **Changements v1 → v1.1 :** mouvement dédié `UEMBCharacterMovementComponent` (sprint par « saved moves »), retour de coup `Client_ConfirmHit` / `OnHitConfirmed`, montages fiables `Multicast_PlayMontageReliable`, riposte ×3, i-frames par timer, parade routée par `IEMBHitReceiver`, pièces de construction qui reçoivent les coups, `PlacerPlayerId` et `GetBaseId`, recalcul limité au sous-graphe dépendant et cascade par niveaux, inventaire pondéré, foudre de phase 3, VFX des zones de feu, fichiers projet et CSV de données. Le détail de chaque écart corrigé ou encore ouvert est en section 9.
 > **Règle de lecture :** tout ce qui n'existe pas dans le code est marqué **« prévu, non codé »**. Les noms de classes, de membres, de délégués et de RPC cités sans cette mention existent tels quels dans les en-têtes.
@@ -15,12 +16,14 @@
 |---|---|---|
 | A1 | Le jeu repose sur **des composants d'acteur** (`UEMBStatsComponent`, `UEMBCombatComponent`, `UEMBInventoryComponent`, `UEMBBuildingComponent`) portés par `AEMBPlayerCharacter`, et non sur le Gameplay Ability System. | Codé |
 | A2 | Un seul point d'entrée pour tous les dégâts : `UEMBCombatComponent::ApplyHitToActor` (routage interface → FSM → jauges). | Codé |
-| A3 | Le dragon est un `ACharacter` serveur-autoritaire piloté par un Behavior Tree (3 tâches, 1 service, 1 décorateur C++) ; l'arène se met à jour **sans réplication** à partir de la phase répliquée du boss. | Codé (les assets BT/BB sont à créer) |
+| A3 | Les trois boss dérivent de **`AEMBBossBase`** (`ACharacter`, `IEMBHitReceiver`, abstraite) qui factorise stats, phases, résistances, points faibles, attaques chronométrées, rencontre et défaite ; ils sont pilotés par `AEMBBossAIController` et un Behavior Tree (sélection, service et décorateur communs ; tâches propres : souffle et piqué du dragon, charge du Colosse, dash, plongeons et repositionnement de Nyxariel). Les arènes se mettent à jour **sans réplication** à partir de la phase répliquée du boss ; seuls leurs éléments interactifs (obélisques, cloches) sont répliqués. | Codé (assets BT/BB, Blueprints et DataTables à créer dans l'éditeur) |
 | A4 | La construction utilise **un acteur répliqué dormant par pièce** (`AEMBBuildablePiece`, qui reçoit aussi les coups via `IEMBHitReceiver`) et un graphe d'intégrité dans un `UWorldSubsystem` (recalcul limité au sous-graphe dépendant, destructions regroupées par frame, cascade par niveaux, chargement en masse). **Décision utilisateur : acteur par pièce pour la v1** ; l'acteur « Base » à **Fast Array** (`03_Scalabilite.md` D5, Q4) reste une évolution. | Codé (acteur par pièce, retenu v1) / Fast Array : évolution |
-| A5 | Gameplay Framework : `AEMBGameMode` (branche la sauvegarde sur le cycle de vie de la partie, déclare `AEMBPlayerState` et `AEMBPlayerCharacter`) et `AEMBPlayerState` (porte la progression) sont codés. **GameState et PlayerController propres n'existent pas**, et **aucune réapparition (respawn)** n'est codée : un joueur mort reste en état `Dead`, entrées désactivées. | Partiel |
-| A6 | Progression : `UEMBProgressionComponent` sur `AEMBPlayerState` (état répliqué), `UEMBProgressionSubsystem` (`UWorldSubsystem`, règles et événements monde), `UEMBProgressionSettings` (`UDeveloperSettings`, barèmes dans `DefaultGame.ini`), `AEMBDiscoveryVolume` (lieux découverts). XP, niveaux, points, glyphes, rangs de compétences et passifs de combat, construction et charge sont appliqués (section 5). Passifs de survie et compétences actives : **non appliqués**. | Codé (réserves section 9) |
-| A7 | Sauvegarde : `UEMBSaveSubsystem` (`UGameInstanceSubsystem`, serveur uniquement), `UEMBSaveGame`, structures `EMBSaveTypes.h` ; 3 mondes × 2 fichiers A/B écrits en alternance, autosave 300 s / boss vaincu / déconnexion, report pendant une rencontre de boss, chargement en masse des constructions (section 6). | Codé (réserves section 9) |
-| A8 | Interface utilisateur (UMG) : aucun widget n'est codé ; les délégués nécessaires au HUD, à l'arbre de glyphes et aux sauvegardes existent. | Prévu, non codé |
+| A5 | Gameplay Framework : `AEMBGameMode` (cycle de vie de la sauvegarde **et réapparition** : `RespawnPlayer`) et `AEMBPlayerState` (progression) sont codés. **GameState et PlayerController propres n'existent pas.** | Partiel |
+| A6 | Progression : `UEMBProgressionComponent` sur `AEMBPlayerState` (état répliqué), `UEMBProgressionSubsystem` (`UWorldSubsystem`, règles et événements monde), `UEMBProgressionSettings` (`UDeveloperSettings`, barèmes dans `DefaultGame.ini`), `AEMBDiscoveryVolume` (lieux découverts). XP, niveaux, points, glyphes, rangs et passifs de combat, construction, charge et **survie** (faim/soif, confort, Corruption, résistance au feu) sont appliqués (section 5). `HarvestYield` et compétences actives : **non appliqués**. Les trois boss émettent leur événement de défaite. | Codé (réserves section 9) |
+| A7 | Sauvegarde : `UEMBSaveSubsystem` (`UGameInstanceSubsystem`, serveur uniquement), `UEMBSaveGame` **format 2**, structures `EMBSaveTypes.h` ; 3 mondes × 2 fichiers A/B, autosave 300 s / boss vaincu / déconnexion, report pendant une rencontre de boss **plafonné à 300 s**, chargement en masse des constructions ; v2 : survie, liaison de réapparition, sacs de mort, tous les boss (section 6). | Codé (réserves section 9) |
+| A8 | Interface utilisateur (UMG) : aucun widget n'est codé ; les délégués nécessaires au HUD (jauges, survie, mort, interaction), à l'arbre de glyphes et aux sauvegardes existent. | Prévu, non codé |
+| A9 | Mort et réapparition (référentiel § 9) : à la mort, le joueur passe en **attente de réapparition** (répliquée) ; réapparition demandable après 3 s, automatique à 30 s, au point lié (lit, feu de camp) ou au `PlayerStart`, avec **sac de mort** (`AEMBDeathBag`) contenant tout l'inventaire ; un allié peut **réanimer** (maintien d'*Interagir* 4 s, interface `IEMBInteractable`). | Codé (réserves section 9.5) |
+| A10 | Survie (référentiel § 10) : `UEMBSurvivalComponent` sur le personnage (timer serveur 1 Hz) pousse ses effets vers les jauges et le combat ; `UEMBEnvironmentSubsystem` (température, nuit, Corruption, chaleur, purification) alimenté par `AEMBEnvironmentVolume` et par les pièces construites. **Météo et cycle jour/nuit non codés** : seuls leurs points d'entrée existent (`SetTimeOfDay`, `SetWeatherTemperatureOffset`). | Codé (points d'entrée seulement pour météo et jour/nuit) |
 
 ---
 
@@ -28,63 +31,77 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│ UI (UMG)                    prévu, non codé — s'abonne aux délégués (jauges, état de combat,  │
-│                             inventaire, résultat de placement, phase du boss)                 │
+│ UI (UMG)                    prévu, non codé — s'abonne aux délégués (jauges, survie, mort,    │
+│                             interaction, état de combat, inventaire, placement, phase du boss)│
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Gameplay Framework          AEMBGameMode (cycle de vie de la sauvegarde) · AEMBPlayerState    │
+│ Gameplay Framework          AEMBGameMode (sauvegarde + RespawnPlayer) · AEMBPlayerState       │
 │                             (progression). GameState / PlayerController : classes moteur.     │
-│                             Pawns codés : AEMBPlayerCharacter, AEMBDragonBoss (ACharacter)    │
+│                             Pawns codés : AEMBPlayerCharacter (IEMBInteractable : réanimation)│
+│                             AEMBBossBase (abstraite) ◄ AEMBDragonBoss, AEMBColossusBoss,      │
+│                             AEMBSeraphBoss                                                    │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Composants de jeu           UEMBStatsComponent (joueur ET boss) · UEMBCombatComponent (FSM)   │
 │                             UEMBInventoryComponent (poids) · UEMBBuildingComponent            │
+│                             UEMBSurvivalComponent (faim, soif, température, Corruption)       │
 │                             UEMBCharacterMovementComponent (sprint prédit, saved moves)       │
 │                             UEMBProgressionComponent (sur le PlayerState)                     │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Acteurs de monde            AEMBBuildablePiece (pièce posée, IEMBHitReceiver) ·               │
-│                             AEMBDragonArena (décor par phase, lave, foudre, état final calme) │
-│                             AEMBDiscoveryVolume (lieu découvert, serveur)                     │
+│ Acteurs de monde            AEMBBuildablePiece (pièce posée, IEMBHitReceiver, IEMBInteractable│
+│                             si point de réapparition, chaleur / purification) · AEMBDeathBag  │
+│                             AEMBDragonArena · AEMBColossusArena + AEMBObelisk ·               │
+│                             AEMBSeraphArena + AEMBSeraphBell · AEMBSeraphShadow (clones) ·    │
+│                             AEMBProjectile (poolé) · AEMBDiscoveryVolume ·                    │
+│                             AEMBEnvironmentVolume (biome, sans collision)                     │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Subsystems                  UEMBStructureSubsystem (UWorldSubsystem : graphe, intégrité,      │
-│                             effondrement, chargement en masse) · UEMBProgressionSubsystem     │
-│                             (UWorldSubsystem : tables, événements monde) · UEMBSaveSubsystem  │
-│                             (UGameInstanceSubsystem : fichiers A/B, autosave, serveur seul)   │
+│ Subsystems                  UEMBStructureSubsystem (graphe, intégrité, effondrement) ·        │
+│                             UEMBProgressionSubsystem (tables, événements monde) ·             │
+│                             UEMBRespawnSubsystem (liaisons, sacs ; serveur) ·                 │
+│                             UEMBEnvironmentSubsystem (température, Corruption ; local) :      │
+│                             tous UWorldSubsystem · UEMBSaveSubsystem (UGameInstanceSubsystem :│
+│                             fichiers A/B, autosave, serveur seul)                             │
 │ Réglages                    UEMBProgressionSettings (UDeveloperSettings, DefaultGame.ini)     │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ IA (serveur uniquement)     AEMBDragonAIController (perception vue, Blackboard)               │
-│                             BTTask_EMBSelectAttack · BTTask_EMBDragonBreath ·                 │
-│                             BTTask_EMBDragonDiveAttack · BTService_EMBUpdateCombatContext ·   │
-│                             BTDecorator_EMBDragonPhase                                        │
+│ IA (serveur uniquement)     AEMBBossAIController ◄ AEMBDragonAIController (nom historique)    │
+│                             Communs : BTTask_EMBSelectAttack · BTService_EMBUpdateCombatContext│
+│                             · BTDecorator_EMBDragonPhase. Dragon : BTTask_EMBDragonBreath,    │
+│                             BTTask_EMBDragonDiveAttack. Colosse : BTTask_EMBColossusCharge.   │
+│                             Nyxariel : BTTask_EMBSeraphDash / _SeraphPlunge / _SeraphReposition│
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Animation                   EMBAnimNotifyState_HitWindow / _ComboWindow / _IFrames            │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Données                     CSV Data/ : DT_BuildPieces (FEMBBuildPieceRow, + RequiredGlyph),  │
-│                             DT_DragonAttacks (FEMBDragonAttackRow), DT_Glyphs (FEMBGlyphRow), │
-│                             DT_SkillNodes (FEMBSkillNodeRow, + PassiveStat / ValuePerRank)    │
-│                             Sauvegarde : UEMBSaveGame + FEMBPlayer/Piece/WorldSaveData        │
+│ Données                     CSV Data/ : DT_BuildPieces (+ RequiredGlyph, + bIsRespawnPoint,   │
+│                             Heat*, Purify*), DT_DragonAttacks, DT_ColossusAttacks,            │
+│                             DT_SeraphAttacks (même ligne FEMBBossAttackRow = FEMBDragonAttack │
+│                             Row), DT_Glyphs, DT_SkillNodes, DT_Consumables (FEMBConsumableRow)│
+│                             Sauvegarde v2 : UEMBSaveGame + FEMBPlayer/Piece/World/DeathBag    │
+│                             SaveData + FEMBSurvivalSaveData                                   │
 │                             Constantes C++ : EMBCombatDefaults, EMBBuildingDefaults,          │
-│                             EMBDragonDefaults · Gameplay Tags natifs : EMBTags                │
-│                             Config : canaux EMBMeleeHit / EMBBuilding, tags Glyph.*           │
+│                             EMBDragonDefaults, EMBBossDefaults, EMBColossusDefaults,          │
+│                             EMBSeraphDefaults, EMBSurvivalDefaults, EMBProjectileDefaults     │
+│                             Gameplay Tags natifs : EMBTags, EMBBossTags                       │
+│                             Config : canaux EMBMeleeHit / EMBBuilding / EMBProjectile,        │
+│                             tags Glyph.* et Skill.*                                           │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Couche | Ce qui existe | Ce qui manque |
 |---|---|---|
-| **GameMode** | `AEMBGameMode` (`AGameModeBase`) : déclare `AEMBPlayerState` et `AEMBPlayerCharacter` ; `InitGame` → `BindToWorld` + `SetActiveSlot` (option d'URL `?Slot=N`), `StartPlay` → `LoadActiveSlot`, `PostLogin` → `RestorePlayer`, `Logout` → `CapturePlayer`, `EndPlay` (arrêt ou fin de PIE) → `SaveNowBlocking` | **réapparition** des joueurs (un joueur mort n'est jamais relancé) ; réinitialisation du boss après un wipe |
-| **GameState** | — (classe moteur) | état de monde **répliqué** : les événements monde (`WorldEvents`) vivent dans `UEMBProgressionSubsystem`, **serveur seul** ; horloge jour/nuit non codée |
+| **GameMode** | `AEMBGameMode` (`AGameModeBase`) : déclare `AEMBPlayerState` et `AEMBPlayerCharacter` ; `InitGame` → `BindToWorld` + `SetActiveSlot` (option d'URL `?Slot=N`), `StartPlay` → `LoadActiveSlot`, `PostLogin` → `RestorePlayer`, `HandleSeamlessTravelPlayer`, `Logout` → `CapturePlayer`, `EndPlay` (arrêt ou fin de PIE) → `SaveNowBlocking` ; **v1.3** : `RespawnPlayer` (sac, point lié ou `PlayerStart`, nouveau pawn, valeurs de réapparition, 3 s d'invulnérabilité) | — (la réinitialisation du boss après un wipe est portée par `AEMBBossBase`, voir § 2.11) |
+| **GameState** | — (classe moteur) | état de monde **répliqué** : les événements monde (`WorldEvents`) vivent dans `UEMBProgressionSubsystem`, **serveur seul** ; horloge jour/nuit et météo non codées (l'heure vit, non répliquée, dans `UEMBEnvironmentSubsystem`) |
 | **PlayerController** | — (`APlayerController` moteur) | `AEMBPlayerController` : HUD, menus, ouverture de l'arbre de glyphes (prévu). Les entrées sont liées dans le **pawn** (`AEMBPlayerCharacter::SetupPlayerInputComponent`). |
 | **PlayerState** | `AEMBPlayerState` : porte `UEMBProgressionComponent`, `NetUpdateFrequency` 10 Hz, `CopyProperties` / `OverrideWith` (voyage transparent, reconnexion d'un joueur inactif) par export/import de la progression | — |
-| **Character** | `AEMBPlayerCharacter` (`PossessedBy` réapplique les passifs), `AEMBDragonBoss` | — |
-| **Composants** | 4 composants de jeu + `UEMBCharacterMovementComponent` + `UEMBProgressionComponent` (voir § 2) | — |
-| **Subsystems** | `UEMBStructureSubsystem`, `UEMBProgressionSubsystem` (monde), `UEMBSaveSubsystem` (GameInstance) | — |
-| **IA** | contrôleur + 5 nœuds BT | assets `BT_Vaelthyrax` et `BB_Vaelthyrax` à créer dans l'éditeur |
-| **Données** | structures de lignes + CSV `Data/DT_BuildPieces.csv` (31 lignes, colonne `RequiredGlyph`), `DT_DragonAttacks.csv` (11), `DT_Glyphs.csv` (36), `DT_SkillNodes.csv` (20) | import en DataTables dans l'éditeur (`/Game/Data/`, chemins attendus par `DefaultGame.ini`) |
-| **Projet** | `Emberfall.uproject` (UE 5.4, plugins EnhancedInput et Niagara), `Emberfall.Target.cs`, `EmberfallEditor.Target.cs`, `EmberfallServer.Target.cs`, `Config/DefaultEngine.ini` (Enhanced Input, canaux de collision, `GlobalDefaultGameMode=/Script/Emberfall.EMBGameMode`), `DefaultGame.ini` (progression, sauvegarde, cuisson de `/Game/Data`), `Config/Tags/EmberfallGlyphs.ini` | réglages réseau (débits, Push Model), cartes par défaut |
+| **Character** | `AEMBPlayerCharacter` (`PossessedBy` réapplique les passifs ; mort, réanimation, interaction), `AEMBBossBase` et ses 3 classes filles | — |
+| **Composants** | 5 composants de jeu (dont `UEMBSurvivalComponent`) + `UEMBCharacterMovementComponent` + `UEMBProgressionComponent` (voir § 2) | — |
+| **Subsystems** | `UEMBStructureSubsystem`, `UEMBProgressionSubsystem`, `UEMBRespawnSubsystem`, `UEMBEnvironmentSubsystem` (monde), `UEMBSaveSubsystem` (GameInstance) | système météo / jour-nuit qui appellerait les setters de l'environnement |
+| **IA** | contrôleur générique `AEMBBossAIController` (+ `AEMBDragonAIController`, classe fine) + 9 nœuds BT (3 communs, 6 propres aux boss) | assets `BT_` / `BB_` des trois boss à créer dans l'éditeur (schémas en § 4) |
+| **Données** | structures de lignes + CSV `Data/DT_BuildPieces.csv` (32 lignes, colonnes v1.3 `bIsRespawnPoint`, `HeatRadius`, `HeatBonus`, `PurifyRadius`, `PurifyRate` ; nouvelle ligne `PurifyingBrazier`), `DT_DragonAttacks.csv` (11), `DT_ColossusAttacks.csv` (9), `DT_SeraphAttacks.csv` (9), `DT_Consumables.csv` (9), `DT_Glyphs.csv` (36), `DT_SkillNodes.csv` (20) | import en DataTables dans l'éditeur (`/Game/Data/`, chemins attendus par `DefaultGame.ini`) ; affectation des tables d'attaques sur les Blueprints de boss |
+| **Projet** | `Emberfall.uproject` (UE 5.4, plugins EnhancedInput et Niagara), `Emberfall.Target.cs`, `EmberfallEditor.Target.cs`, `EmberfallServer.Target.cs`, `Config/DefaultEngine.ini` (Enhanced Input, canaux de collision `EMBMeleeHit`, `EMBBuilding`, `EMBProjectile`, `GlobalDefaultGameMode=/Script/Emberfall.EMBGameMode`), `DefaultGame.ini` (progression, sauvegarde, classe du sac, table des consommables, cuisson de `/Game/Data`), `Config/Tags/EmberfallGlyphs.ini` | réglages réseau (débits, Push Model), cartes par défaut ; actions Enhanced Input `IA_Interact`, `IA_Respawn` (optionnelle), consommation rapide (optionnelle) à créer |
 | **UI (UMG)** | dépendance `UMG` déclarée dans `Emberfall.Build.cs` | aucun widget (prévu) |
 
 **Principes visibles dans le code**
-- **Aucun Tick de gameplay permanent.** Le personnage, le combat, le boss, les pièces, la progression et la sauvegarde n'ont pas de Tick (la sauvegarde utilise trois timers : autosave 300 s, relevé du point sûr 10 s, nouvelle tentative de restauration de pawn 0,25 s). Seuls tournent : la régénération de `UEMBStatsComponent` (Tick réveillé à la demande, 20 Hz, serveur), l'aperçu de `UEMBBuildingComponent` (30 Hz, client local), les tâches latentes du BT (`bNotifyTick`) et le **Tick du contrôleur IA du dragon**, volontairement réactivé : `AAIController::Tick` appelle `UpdateControlRotation`, qui applique le focus à la rotation du dragon (coût d'une rotation, serveur seul). Le reste passe par des RPC, des notifies, des timers (sprint, brûlure, zones de feu, lave, foudre, vagues d'effondrement) et des délégués.
+- **Aucun Tick de gameplay permanent.** Le personnage, le combat, les boss, les pièces, la progression, la survie et la sauvegarde n'ont pas de Tick (la sauvegarde utilise trois timers : autosave 300 s, relevé du point sûr 10 s, nouvelle tentative de restauration de pawn 0,25 s ; la survie un timer serveur de 1 Hz par joueur ; chaque boss un contrôle de wipe à 1 Hz). Seuls tournent : la régénération de `UEMBStatsComponent` (Tick réveillé à la demande, 20 Hz, serveur), l'aperçu de `UEMBBuildingComponent` (30 Hz, client local), les tâches latentes du BT (`bNotifyTick`), le **Tick du contrôleur IA des boss**, volontairement réactivé (`UpdateControlRotation` applique le focus à la rotation du boss, serveur seul), le Tick d'un clone de Nyxariel **pendant son dash seulement**, et le `UProjectileMovementComponent` des projectiles **actifs** (sous-pas à 60 Hz ; un projectile rendu au pool est désactivé). Le reste passe par des RPC, des notifies, des timers (sprint, brûlure, zones de feu, lave, foudre, anneaux runiques, vagues d'effondrement, réapparition automatique, maintien d'interaction, balayage de la cible d'interaction côté client) et des délégués.
 - **Serveur seul juge.** Toute modification de jauge, d'inventaire, d'état de combat, de pièce ou de boss est gardée par `HasAuthority()`.
-- **Constantes centralisées.** Les valeurs du référentiel sont recopiées dans `EMBCombatDefaults`, `EMBBuildingDefaults`, `EMBDragonDefaults` ; les composants les exposent en `UPROPERTY(EditDefaultsOnly)` quand elles doivent être réglables en Blueprint.
+- **Constantes centralisées.** Les valeurs du référentiel sont recopiées dans `EMBCombatDefaults`, `EMBBuildingDefaults`, `EMBDragonDefaults`, `EMBBossDefaults`, `EMBColossusDefaults`, `EMBSeraphDefaults`, `EMBSurvivalDefaults` ; les valeurs qui ne viennent pas du référentiel y sont marquées **(\*)** (choix d'implémentation à équilibrer) ; les composants les exposent en `UPROPERTY(EditDefaultsOnly)` quand elles doivent être réglables en Blueprint.
 
 ---
 
@@ -281,7 +298,8 @@ classDiagram
         -RecomputeAffected(TArray, uint32, FVector)
     }
 
-    class AEMBDragonBoss {
+    class AEMBBossBase {
+        <<abstract>>
         -int32 CurrentPhase
         -bool bIsTransitioning
         -bool bIsStunned
@@ -290,7 +308,7 @@ classDiagram
         -bool bIsVulnerable
         #UEMBStatsComponent StatsComponent
         +ReceiveEMBHit(FEMBHitData) EEMBHitResult
-        +BeginTimedAttack(FEMBDragonAttackRow) float
+        +BeginTimedAttack(FEMBBossAttackRow) float
         +ApplyAreaDamage(...) TArray
         +ApplyConeDamage(...) TArray
         +BeginEncounter()
@@ -299,20 +317,26 @@ classDiagram
         +Multicast_ShowGroundMarker(FVector, float, float, bool)
         +IsEncounterActive() bool
         +ApplyDefeatedFromSave()
+        +GetDefeatedEventTag() FGameplayTag*
         +OnPhaseChanged
         +OnPhaseTransitionStarted
         +OnStunChanged
         +OnBossDefeated
         +OnEncounterEnded
     }
+    class AEMBDragonBoss {
+        +IsCataclysmDue() bool
+        +NotifyCataclysmFired()
+    }
 
-    class AEMBDragonAIController {
+    class AEMBBossAIController {
         +FName BBKey_TargetActor$
         +SyncBlackboardState()
         +SetCombatTarget(AActor)
         +SetFacingLocked(bool)
         #HandleTargetPerceptionUpdated(AActor, FAIStimulus)
     }
+    class AEMBDragonAIController
 
     class AEMBDragonArena {
         #TArray~FEMBArenaPhaseConfig~ PhaseConfigs
@@ -345,8 +369,10 @@ classDiagram
     }
 
     ACharacter <|-- AEMBPlayerCharacter
-    ACharacter <|-- AEMBDragonBoss
-    AAIController <|-- AEMBDragonAIController
+    ACharacter <|-- AEMBBossBase
+    AEMBBossBase <|-- AEMBDragonBoss
+    AAIController <|-- AEMBBossAIController
+    AEMBBossAIController <|-- AEMBDragonAIController
     UActorComponent <|-- UEMBStatsComponent
     UActorComponent <|-- UEMBCombatComponent
     UActorComponent <|-- UEMBInventoryComponent
@@ -361,9 +387,10 @@ classDiagram
     UAnimNotifyState <|-- EMBAnimNotifyState_ComboWindow
     UAnimNotifyState <|-- EMBAnimNotifyState_IFrames
     UCharacterMovementComponent <|-- UEMBCharacterMovementComponent
-    IEMBHitReceiver <|.. AEMBDragonBoss
+    IEMBHitReceiver <|.. AEMBBossBase
     IEMBHitReceiver <|.. AEMBBuildablePiece
-    IGameplayTagAssetInterface <|.. AEMBDragonBoss
+    IGameplayTagAssetInterface <|.. AEMBBossBase
+    IGameplayTagAssetInterface <|.. AEMBPlayerCharacter
 
     AEMBPlayerCharacter *-- UEMBStatsComponent
     AEMBPlayerCharacter *-- UEMBCombatComponent
@@ -372,7 +399,7 @@ classDiagram
     AEMBPlayerCharacter *-- UEMBCharacterMovementComponent : SetDefaultSubobjectClass
     UEMBCharacterMovementComponent ..> FEMBSavedMove : rejeu réseau
     UEMBCharacterMovementComponent ..> AEMBPlayerCharacter : NotifySprintRequested (serveur)
-    AEMBDragonBoss *-- UEMBStatsComponent
+    AEMBBossBase *-- UEMBStatsComponent
     AEMBPlayerState *-- UEMBProgressionComponent
     AEMBPlayerController ..> AEMBPlayerCharacter : possède (prévu)
     UEMBProgressionComponent ..> UEMBCombatComponent : SetPassiveModifiers (serveur)
@@ -392,16 +419,16 @@ classDiagram
     UEMBStructureSubsystem o-- AEMBBuildablePiece : graphe FNode
     AEMBBuildablePiece ..> UEMBStructureSubsystem : Register et RequestCollapse
 
-    AEMBDragonAIController o-- AEMBDragonBoss : OnPossess
-    AEMBDragonBoss ..> AEMBDragonAIController : PushStateToBlackboard
-    AEMBDragonBoss ..> UEMBCombatComponent : ApplyHitToActor
+    AEMBBossAIController o-- AEMBBossBase : OnPossess
+    AEMBBossBase ..> AEMBBossAIController : PushStateToBlackboard
+    AEMBBossBase ..> UEMBCombatComponent : ApplyHitToActor
     AEMBDragonArena ..> AEMBDragonBoss : OnPhaseChanged
     AEMBDragonArena ..> UEMBCombatComponent : ApplyHitToActor lave et foudre
     AEMBDragonArena ..> AEMBDragonBoss : Multicast_ShowGroundMarker (foudre)
-    BTTask_EMBSelectAttack ..> AEMBDragonBoss
+    BTTask_EMBSelectAttack ..> AEMBBossBase
     BTTask_EMBDragonBreath ..> AEMBDragonBoss
     BTTask_EMBDragonDiveAttack ..> AEMBDragonBoss
-    BTService_EMBUpdateCombatContext ..> AEMBDragonAIController
+    BTService_EMBUpdateCombatContext ..> AEMBBossAIController
     EMBAnimNotifyState_HitWindow ..> UEMBCombatComponent : FindFromMesh
     EMBAnimNotifyState_ComboWindow ..> UEMBCombatComponent : FindFromMesh
     EMBAnimNotifyState_IFrames ..> UEMBCombatComponent : FindFromMesh
@@ -409,11 +436,11 @@ classDiagram
     UEMBProgressionSubsystem ..> FEMBGlyphRow : lit
     UEMBProgressionSubsystem ..> FEMBSkillNodeRow : lit
     UEMBProgressionSubsystem ..> UEMBProgressionComponent : GrantTrigger, AddXP (serveur)
-    AEMBDragonBoss ..> UEMBProgressionSubsystem : NotifyWorldEvent à la mort (serveur)
-    AEMBDragonBoss ..> UEMBProgressionSubsystem : IsWorldEventRecorded (BeginPlay)
+    AEMBBossBase ..> UEMBProgressionSubsystem : NotifyWorldEvent à la mort (serveur)
+    AEMBBossBase ..> UEMBProgressionSubsystem : IsWorldEventRecorded (BeginPlay)
 ```
 
-Le détail de la progression et de la sauvegarde (réglages, GameMode, sous-système de sauvegarde, structures sauvegardées) est dans le diagramme dédié du § 2.7, pour garder celui-ci lisible.
+Le détail de la progression et de la sauvegarde est dans le diagramme du § 2.7 ; la hiérarchie complète des boss (Colosse, Nyxariel, arènes, projectiles) au § 2.11 ; la survie, la mort et l'interaction au § 2.12. Celui-ci reste centré sur le combat, la construction et le dragon.
 
 **Remarques sur le diagramme**
 - Le personnage **n'implémente pas** `IEMBHitReceiver` (commentaire explicite de `EMBPlayerCharacter.h`) : les coups qui le visent passent par son `UEMBCombatComponent`.
@@ -480,11 +507,12 @@ stateDiagram-v2
     }
 
     Vivant --> Dead : OnDeath (PV = 0), depuis tout état
-    Dead --> [*]
+    Dead --> Idle : ResetFromDeath (réanimation par un allié, v1.3)
+    Dead --> [*] : réapparition (le pawn est détruit, un pawn neuf démarre en Idle)
 ```
 
 Règles transversales codées :
-- `Dead` : aucune sortie ; on peut y entrer depuis n'importe quel état.
+- `Dead` : une seule sortie, `ResetFromDeath` (serveur, **v1.3**) appelée par la réanimation : retour en `Idle`, montage de mort arrêté. La réapparition ne fait pas sortir la FSM de `Dead` : `AEMBGameMode::RespawnPlayer` détruit le pawn et en crée un neuf (§ 2.13). On entre en `Dead` depuis n'importe quel état ; le combat mémorise si la mort vient de dégâts continus (`WasKilledByDamageOverTime`), ce qui décide de l'emplacement du sac.
 - `Staggered` : accessible depuis tout état sauf `Staggered` lui-même (« pas de stun-lock ») et `Dead`. Durée pilotée par un timer (0,8 s poise brisée, 1,2 s garde brisée), pas par le montage.
 - `Dodge --> Dodge` : autorisé par la table (une action de départ depuis `Dodge` quand `bDodgeCancelOpen`), donc une roulade peut en enchaîner une autre après 0,50 s.
 - `ChargedAttack --> Dodge` : seule annulation possible **pendant la charge** (`bCharging` vrai) ; l'endurance de la charge (38) n'étant facturée qu'au relâchement, rien n'est dépensé. Une fois la frappe lancée, plus d'annulation. Cette roulade n'est **pas prédite** côté client (la prédiction n'agit que depuis `Idle`, `Block` ou la fenêtre de combo) : elle part au retour du serveur.
@@ -493,6 +521,7 @@ Règles transversales codées :
 - `Recovery` n'autorise **ni roulade ni parade** : un input de ce type est mémorisé (buffer 0,2 s) et exécuté au retour en `Idle`.
 - Le combo exige `LastAttackState == LightAttack` : la `Recovery` d'une attaque lourde ou chargée ne s'enchaîne pas.
 - Au retour en `Idle`, le serveur consomme l'input mémorisé puis relève la garde si `bBlockHeld` est encore vrai.
+- **Protection de réapparition / réanimation** (v1.3) : `GrantSpawnProtection(3 s)` pose `bSpawnProtected` (répliqué), compté comme `State.Combat.Invulnerable`, **y compris contre les dégâts continus** ; annulée à la première attaque du joueur.
 - Tags d'état : `State.Combat.Invulnerable` (compteur `InvulnerableCount` ; pour la roulade, **timer serveur** de la frame 3 à la frame 16, 14 ou 12 selon la charge portée — 13, 11 ou 9 frames d'i-frames —, indépendant du montage et de l'évaluation d'animation ; le notify `IFrames` reste possible mais optionnel et cumulatif), `State.Combat.HyperArmor` (lourde : timer frames 6-31 ; chargée : dès la charge jusqu'à la fin de la fenêtre active), `State.Combat.Staggered` et `State.Dead` (déduits de `CurrentState`). Les compteurs sont remis à zéro à chaque transition (`ResetTransientFlags`).
 - La fenêtre de parade parfaite (frames 4-13) et la fenêtre de riposte (1,5 s après une parade parfaite, `IsRiposteWindowOpen`) sont aussi des timers / horodatages serveur.
 
@@ -535,7 +564,7 @@ sequenceDiagram
         CCs->>D: ApplyHitToActor : cast IEMBHitReceiver puis ReceiveEMBHit
         D->>D: ignoré si transition de phase ou mort
         D->>D: BeginEncounter (idempotent) : mise à l'échelle coop figée avant tout dégât
-        D->>D: multiplicateur os (ResolveWeakPointMultiplier), x3 si étourdi, x1,5 si vulnérable
+        D->>D: résistance par type (DamageResistances), multiplicateur os (ResolveWeakPointMultiplier, permanents puis conditionnels), x3 si étourdi, x1,5 si vulnérable
         D->>DS: ApplyDamage(dégâts finaux)
         D->>D: AddThreat(instigateur)
         D->>DS: ApplyPoiseDamage si non étourdi
@@ -788,7 +817,7 @@ classDiagram
         +bool bComplete
         +FinalizeForWrite()
         +IsComplete() bool
-        +MigrateToCurrent() bool
+        +MigrateToCurrent() EEMBMigrationResult
         +IsNewerThan(UEMBSaveGame) bool
     }
     class FEMBPlayerSaveData {
@@ -797,6 +826,17 @@ classDiagram
         bHasPawnState, Resources, Health, Stamina
         bHasPawnTransform, PawnTransform
         bHasLastSafeTransform, LastSafeTransform
+        v2 : Survival, bHasSurvivalState
+        v2 : BoundRespawnPieceSaveId
+    }
+    class FEMBDeathBagSaveData {
+        <<struct>>
+        OwnerStableId, Transform, Contents
+    }
+    class FEMBSurvivalSaveData {
+        <<struct>>
+        Hunger, Thirst, Corruption, FeltTemperature
+        FireOilRemaining, IntoxicationRemaining
     }
     class FEMBPieceSaveData {
         <<struct>>
@@ -807,6 +847,7 @@ classDiagram
     class FEMBWorldSaveData {
         <<struct>>
         WorldEvents
+        v2 : DeathBags
     }
     class FEMBProgressionSaveData {
         <<struct>>
@@ -828,6 +869,8 @@ classDiagram
     UEMBSaveGame *-- FEMBPlayerSaveData
     UEMBSaveGame *-- FEMBPieceSaveData
     FEMBPlayerSaveData *-- FEMBProgressionSaveData
+    FEMBPlayerSaveData *-- FEMBSurvivalSaveData
+    FEMBWorldSaveData *-- FEMBDeathBagSaveData
 
     AEMBGameMode ..> UEMBSaveSubsystem : cycle de vie (serveur)
     AEMBGameMode ..> AEMBPlayerState : PlayerStateClass
@@ -842,10 +885,12 @@ classDiagram
     UEMBSaveSubsystem ..> UEMBSaveGame : AsyncSave / AsyncLoad
     UEMBSaveSubsystem ..> UEMBStructureSubsystem : BeginBulkLoad, EndBulkLoad, GetAllPieces
     UEMBSaveSubsystem ..> AEMBBuildablePiece : SpawnActorDeferred, RestoreFromSave
-    UEMBSaveSubsystem ..> AEMBDragonBoss : IsEncounterActive, ApplyDefeatedFromSave
+    UEMBSaveSubsystem ..> AEMBBossBase : IsEncounterActive, ApplyDefeatedFromSave (tous les boss)
     UEMBSaveSubsystem ..> UEMBInventoryComponent : ExportResources, ImportResources
     UEMBSaveSubsystem ..> UEMBStatsComponent : RestoreFromSave
     UEMBSaveSubsystem ..> UEMBProgressionSettings : DeathSaveBehavior
+    UEMBSaveSubsystem ..> UEMBSurvivalComponent : ExportSaveData, ImportSaveData (v2)
+    UEMBSaveSubsystem ..> UEMBRespawnSubsystem : RestoreBinding, RestoreBag, GetPersistentBags (v2)
 ```
 
 **Remarques**
@@ -889,13 +934,15 @@ sequenceDiagram
 
 Le rang de compétence suit exactement le même chemin (`RequestRankUpSkill` → `Server_RankUpSkill` → `CanRankUpSkill` : ligne, rang maximal, niveau, parents au rang ≥ 1, savoirs, points d'Éveil) ; un rang de passif modifie `Modifiers` et part immédiatement vers le pawn. Une pièce dont la ligne porte un `RequiredGlyph` devient constructible dès que `HasGlyph` est vrai, côté aperçu (client) comme côté validation (serveur).
 
-### 2.9 Séquence « mort du dragon → XP, déclencheur, autosave »
+### 2.9 Séquence « mort d'un boss → XP, déclencheur, autosave » (exemple : le dragon)
+
+La séquence est portée par `AEMBBossBase::HandleStatsDeath` et vaut pour les trois boss : seuls changent le tag (`GetDefeatedEventTag` : `.Guardian`, `.Seraph`, `.Dragon`), l'XP (`GetDefeatXP` lit `GuardianXP` 6 000, `SeraphXP` 15 000 ou `DragonXP` 60 000) et le nettoyage propre à la classe fille (`OnDefeatedServer` : Résonance interrompue, clones dissipés et pool de projectiles libéré...).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant DS as UEMBStatsComponent dragon (serveur)
-    participant D as AEMBDragonBoss (serveur)
+    participant D as AEMBDragonBoss via AEMBBossBase (serveur)
     participant SUB as UEMBProgressionSubsystem (serveur)
     participant P as UEMBProgressionComponent de chaque participant (serveur)
     participant SAV as UEMBSaveSubsystem (serveur)
@@ -923,7 +970,7 @@ sequenceDiagram
     D-->>C: bIsDead répliqué puis OnRep_IsDead : OnEncounterEnded côté clients, arène calme
 ```
 
-L'ordre « distribution puis enregistrement » est voulu : l'autosave déclenchée par `OnWorldEventRecorded` capture des progressions déjà à jour. Un joueur mort mais présent dans le rayon est participant (son pawn existe encore, aucune réapparition n'étant codée).
+L'ordre « distribution puis enregistrement » est voulu : l'autosave déclenchée par `OnWorldEventRecorded` capture des progressions déjà à jour. Un joueur mort **en attente de réapparition** dans le rayon est participant (son pawn existe encore) ; un joueur qui a déjà réapparu loin de l'arène (au lit, au `PlayerStart`) ne l'est plus.
 
 ### 2.10 Séquence « chargement d'un monde »
 
@@ -934,49 +981,498 @@ sequenceDiagram
     participant SAV as UEMBSaveSubsystem
     participant DISK as Fichiers EMB_World_n_A / _B
     participant SUB as UEMBProgressionSubsystem
-    participant D as AEMBDragonBoss
+    participant D as Chaque AEMBBossBase
     participant ST as UEMBStructureSubsystem
     participant P as AEMBBuildablePiece (créées)
+    participant RS as UEMBRespawnSubsystem
     participant PC as Joueur (PlayerController)
 
     GM->>SAV: InitGame : BindToWorld(World) (synchrone, remise à zéro, génération +1, timers recréés, écoute OnWorldEventRecorded)
     GM->>SAV: SetActiveSlot(?Slot=N, borné 0..2)
-    Note over D: BeginPlay du dragon : CheckDefeatedFromSave (WorldEvents encore vide à ce stade)
+    Note over D: BeginPlay de chaque boss : CheckDefeatedFromSave (WorldEvents encore vide à ce stade)
     GM->>SAV: StartPlay : LoadActiveSlot (idempotent, LoadState = Loading)
     SAV->>DISK: AsyncLoadGameFromSlot(_A) et AsyncLoadGameFromSlot(_B)
     opt Un joueur se connecte pendant la lecture
         GM->>SAV: PostLogin : RestorePlayer : ClaimIdentity puis mise en attente (PendingRestoreControllers)
     end
     DISK-->>SAV: OnSlotLoaded x2 (callback ignoré si la génération a changé)
-    SAV->>SAV: FinishLoading : pour chaque fichier, bon monde ? MigrateToCurrent ? IsComplete ?
-    Note over SAV: version inconnue ou inférieure à 1 : écritures BLOQUÉES. Fichier incomplet, absent ou illisible : ignoré
+    SAV->>SAV: FinishLoading : pour chaque fichier, bon monde ? MigrateToCurrent (v1 → v2) ? IsComplete ?
+    Note over SAV: TooRecent (version > binaire) : écritures BLOQUÉES. Invalid (version < 1, migration impossible) : ignoré sans bloquer. Fichier incomplet, absent ou illisible : ignoré
     SAV->>SAV: retient le plus récent valide (IsNewerThan), prochaine écriture = l'autre fichier
     alt Aucun fichier valide
         SAV->>SAV: monde vierge
     else Sauvegarde retenue
         SAV->>SAV: ApplyLoadedSave : PlayerCache (256 joueurs max), derniers points sûrs
         SAV->>SUB: RestoreWorldEvents (sans diffusion)
-        SAV->>D: ApplyDefeatedFromSave si Event.Boss.Killed.Dragon (caché, sans collision ni IA, OnEncounterEnded)
+        SAV->>D: ApplyDefeatedFromSave pour chaque boss dont l'événement de défaite est enregistré (caché, sans collision ni IA, OnEncounterEnded)
         SAV->>ST: BeginBulkLoad (adjacence seule, aucune intégrité ni effondrement)
         loop Chaque pièce (15 000 max)
             SAV->>SAV: ligne DT_BuildPieces existante et transform sain, classe, matériau et catégorie relus dans la TABLE
-            SAV->>P: SpawnActorDeferred, InitializePiece(..., INDEX_NONE), RestoreFromSave(PV, PlacerStableId), FinishSpawning
+            SAV->>P: SpawnActorDeferred, InitializePiece(..., INDEX_NONE), ApplyRowFunctions (respawn, chaleur, purification), RestoreFromSave(PV, PlacerStableId), FinishSpawning
             P->>ST: RegisterPiece (mode masse)
         end
         SAV->>ST: EndBulkLoad : UN recalcul global depuis les ancres, pièces à intégrité ≤ 0 détruites sans effet
         SAV->>SAV: contrôle des SupportLinkIds contre les voisins recalculés (journal seulement)
+        SAV->>RS: RestoreBinding(clé, pièce) pour chaque BoundRespawnPieceSaveId retrouvé (v2)
+        SAV->>RS: RestoreBag(propriétaire, transform, contenu assaini) pour chaque sac (v2)
     end
     SAV->>SAV: LoadState = Loaded puis OnLoadCompleted(trouvé ou non)
     SAV->>PC: ProcessPendingRestores puis RestoreFromCache
     PC->>PC: ImportSaveData (progression, tout de suite, sur le PlayerState)
     alt Pawn déjà présent
-        SAV->>PC: TryRestorePawn : ImportResources, Stats RestoreFromSave, TeleportTo (repli SetActorLocation)
+        SAV->>PC: TryRestorePawn : ImportResources, Stats RestoreFromSave, survie ImportSaveData (si bHasSurvivalState), TeleportTo (repli SetActorLocation)
     else Pawn pas encore créé
         SAV->>SAV: nouvelle tentative toutes les 0,25 s pendant 20 s, puis abandon (journal)
     end
 ```
 
 Garde-fou central : **aucune écriture n'est possible avant `LoadState = Loaded`** (`RequestSave` et `SaveNowBlocking` l'ignorent), sinon un monde encore vide écraserait la vraie sauvegarde. Tant qu'une restauration de pawn est en attente, la capture du joueur ne lit pas le pawn neuf (`IsRestorePending`), pour ne pas écraser l'inventaire et les PV sauvegardés.
+
+### 2.11 Diagramme de classes « boss » (v1.3)
+
+```mermaid
+classDiagram
+    direction TB
+
+    class ACharacter
+    class AActor
+    class AAIController
+    class UBTTaskNode
+    class IEMBHitReceiver {
+        <<interface>>
+    }
+
+    class AEMBBossBase {
+        <<abstract>>
+        #TObjectPtr~UDataTable~ AttackTable
+        #float BaseMaxHealth
+        #float ArenaRadius
+        #TArray~float~ PhaseHealthThresholds
+        #int32 EnrageFromPhase
+        #TMap DamageResistances
+        #TMap WeakPointMultipliers
+        #TMap ConditionalWeakPointMultipliers
+        +GetDefeatedEventTag() FGameplayTag*
+        +GetDefeatXP() int64
+        +IsAttackAllowed(Row) bool
+        +GetAttackWeightModifier(Row) float
+        +IsScriptedAttackDue() bool
+        +BeginTimedAttack(Row) float
+        +BeginStun(float)
+        +SetFlying(bool)
+        +StepFlightToward(...) bool
+        +StepGroundCharge(...) bool
+        +BeginVulnerableWindow(float)
+        +SetConditionalWeakPointsActive(bool, float)
+        +IsEncounterActive() bool
+        +ApplyDefeatedFromSave()
+        #OnPhaseEnteredServer(int32, int32)
+        #OnPoiseDamageTaken(float, AActor)
+        #ScheduleCustomEvents(Row, float, float) bool
+        #OnTimedHitExecuted(Row, int32, TArray)
+        #GetChainedAttackTag(Row) FGameplayTag
+        #OnAttackCancelled()
+        #OnDefeatedServer()
+        #OnEncounterBegun()
+        #OnEncounterReset()
+        -TickWipeCheck()
+        -ResetEncounter()
+    }
+    class AEMBDragonBoss {
+        +IsCataclysmDue() bool
+        +NotifyCataclysmFired()
+        #OnEncounterBegun()
+    }
+    class AEMBColossusBoss {
+        +SetArena(AEMBColossusArena)
+        +GetIntactObeliskCount() int32
+        +IsValidChargeObstacle(AActor) bool
+        +ExposeCore(float)
+        +ResolveChargeImpact(FHitResult, Row)
+        #Multicast_RuneRing(...)
+        #Multicast_ResonanceFinished(bool, float)
+    }
+    class AEMBSeraphBoss {
+        +ShouldFly() bool
+        +RollFeintDelay() float
+        +PredictTargetGroundPoint(AActor, float) FVector
+        +MakeSeraphHitData(Row, float) FEMBHitData
+        +ResolveDashContact(...) bool
+        +LaunchFeatherFan(...)
+        +LaunchLance(...)
+        +BroadcastShadowEcho(FEMBSeraphEcho)
+        +Multicast_TipFlash(FGameplayTag, float)
+        -TArray~AEMBProjectile~ ProjectilePool
+    }
+    class AEMBBossAIController {
+        +FName BBKey_TargetActor$
+        +SyncBlackboardState()
+        +SetCombatTarget(AActor)
+        +SetFacingLocked(bool)
+    }
+    class AEMBDragonAIController
+    class AEMBColossusArena {
+        +BindToBoss(AEMBColossusBoss)
+        +GetIntactObeliskCount() int32
+        +IsChargeObstacle(AActor) bool
+    }
+    class AEMBObelisk {
+        -float Health
+        -bool bLit
+        +ReceiveEMBHit(FEMBHitData)
+        +SetLit(bool)
+        +OnObeliskDestroyed
+    }
+    class AEMBSeraphArena
+    class AEMBSeraphBell {
+        -bool bUsed
+        -bool bSilenced
+        +ReceiveEMBHit(FEMBHitData)
+        +MarkUsed()
+        +SetSilenced(bool)
+        +OnBellStruck
+    }
+    class AEMBSeraphShadow {
+        -bool bDissipated
+        +ReceiveEMBHit(FEMBHitData)
+        +QueueEcho(FEMBSeraphEcho)
+        +Dissipate()
+    }
+    class AEMBProjectile {
+        -FEMBProjectileNetState NetState
+        +Launch(FEMBProjectileLaunchParams)
+        +ReturnToPool()
+        +IsProjectileActive() bool
+    }
+    class AEMBDragonArena
+    class BTTask_EMBSelectAttack
+    class BTTask_EMBDragonBreath
+    class BTTask_EMBDragonDiveAttack
+    class BTTask_EMBColossusCharge
+    class BTTask_EMBSeraphDash
+    class BTTask_EMBSeraphPlunge
+    class BTTask_EMBSeraphReposition
+
+    ACharacter <|-- AEMBBossBase
+    IEMBHitReceiver <|.. AEMBBossBase
+    AEMBBossBase <|-- AEMBDragonBoss
+    AEMBBossBase <|-- AEMBColossusBoss
+    AEMBBossBase <|-- AEMBSeraphBoss
+    AAIController <|-- AEMBBossAIController
+    AEMBBossAIController <|-- AEMBDragonAIController
+    AActor <|-- AEMBColossusArena
+    AActor <|-- AEMBObelisk
+    AActor <|-- AEMBSeraphArena
+    AActor <|-- AEMBSeraphBell
+    AActor <|-- AEMBSeraphShadow
+    AActor <|-- AEMBProjectile
+    IEMBHitReceiver <|.. AEMBObelisk
+    IEMBHitReceiver <|.. AEMBSeraphBell
+    IEMBHitReceiver <|.. AEMBSeraphShadow
+    UBTTaskNode <|-- BTTask_EMBColossusCharge
+    UBTTaskNode <|-- BTTask_EMBSeraphDash
+    UBTTaskNode <|-- BTTask_EMBSeraphPlunge
+    UBTTaskNode <|-- BTTask_EMBSeraphReposition
+
+    AEMBBossAIController o-- AEMBBossBase : OnPossess
+    AEMBColossusArena o-- AEMBObelisk : 4
+    AEMBColossusArena ..> AEMBColossusBoss : BindToBoss, SetArena
+    AEMBColossusBoss ..> AEMBColossusArena : obélisques intacts, obstacles
+    AEMBSeraphArena o-- AEMBSeraphBell : 3
+    AEMBSeraphArena ..> AEMBSeraphBoss : OnBellStruck puis BeginStun 2 s
+    AEMBDragonArena ..> AEMBDragonBoss : OnPhaseChanged, OnEncounterEnded
+    AEMBSeraphBoss o-- AEMBProjectile : pool 24 à 96
+    AEMBSeraphBoss o-- AEMBSeraphShadow : 2 clones, 20 s
+    AEMBSeraphShadow ..> AEMBSeraphBoss : rejoue via son API (0,3 s, 30 %)
+    BTTask_EMBSelectAttack ..> AEMBBossBase : IsAttackAllowed, GetAttackWeightModifier
+    BTTask_EMBDragonBreath ..> AEMBDragonBoss
+    BTTask_EMBDragonDiveAttack ..> AEMBDragonBoss
+    BTTask_EMBColossusCharge ..> AEMBColossusBoss : StepGroundCharge, ResolveChargeImpact
+    BTTask_EMBSeraphDash ..> AEMBSeraphBoss : ResolveDashContact, Multicast_TipFlash
+    BTTask_EMBSeraphPlunge ..> AEMBSeraphBoss : StepFlightToward, BeginVulnerableWindow
+    BTTask_EMBSeraphReposition ..> AEMBSeraphBoss : ShouldFly, orbite
+```
+
+**Remarques**
+- **Une seule ligne de données pour les trois boss** : `FEMBBossAttackRow` est un alias (`using`) de `FEMBDragonAttackRow` ; `EEMBDragonAttackKind` reçoit en fin d'énumération `Charge` (6), `Channel` (7), `Rings` (8), `Dash` (9), `Plunge` (10). Les valeurs 0 à 5 du dragon sont inchangées.
+- **Ce que fait chaque classe fille** : le dragon garde ses constantes, le Cataclysm scripté (`IsScriptedAttackDue`) et le poids ×3 de la rafale d'ailes (`GetAttackWeightModifier`) ; le Colosse ajoute le noyau exposé 3 s après le Séisme (point faible **conditionnel**), l'enchaînement Rugissement → Poing-marteau (`GetChainedAttackTag`), les 3 anneaux runiques (timer 20 Hz, un coup par joueur et par anneau), la Résonance (canalisation 3 s, interrompue à 150 de posture) et la charge ; Nyxariel ajoute le vol de combat (phases 1-2), les projectiles poolés, les ombres jumelles, la Feinte à délai aléatoire (`FRandomStream` serveur) et les plongeons.
+- **Rencontre et wipe** (`TickWipeCheck` à 1 Hz) : après 30 s sans joueur vivant à moins d'`ArenaRadius` (dragon 6 000, Colosse 3 000, Nyxariel 4 000 cm), `ResetEncounter` remet les PV au maximum solo, interrompt attaque, étourdissement, vulnérabilité et vol, oublie menace, brûlures et zones de feu, libère l'échelle coop ; la **phase est conservée** (décor d'arène irréversible). Le dragon reprogramme alors son Cataclysm 20 s après la reprise s'il est en phase 3 (`OnEncounterBegun`).
+- Les arènes restent **non répliquées** (état déduit de la phase répliquée) ; seuls les obélisques (PV, allumé) et les cloches (consommée, silencieuse) le sont.
+
+### 2.12 Diagramme de classes « survie, mort, interaction » (v1.3)
+
+```mermaid
+classDiagram
+    direction LR
+
+    class UActorComponent
+    class UWorldSubsystem
+    class AActor
+    class AGameModeBase
+
+    class IEMBInteractable {
+        <<interface>>
+        +CanInteract(APawn) bool
+        +Interact(APawn)
+        +GetInteractionText(APawn) FText
+        +GetInteractionHoldTime() float
+    }
+    class AEMBPlayerCharacter {
+        -bool bDeadAwaitingRespawn
+        -double DeathServerTime
+        -UEMBSurvivalComponent Survival
+        +RequestRespawn()
+        +IsDeadAwaitingRespawn() bool
+        +WasKilledInLethalZone() bool
+        +FellOutOfWorld(UDamageType)
+        +GetAutoRespawnTimeRemaining() float
+        +GetInteractionTarget() AActor
+        +GetInteractionHoldProgress() float
+        -BeginDeath()
+        -EndDeathByRevive()
+        -RespawnNow()
+        -Server_RequestRespawn()
+        -Server_Interact(AActor)
+        -Server_CancelInteract()
+        -Client_InteractionEnded(bool)
+        +OnDeadAwaitingRespawnChanged
+        +OnInteractionTargetChanged
+        +OnInteractionHoldEnded
+    }
+    class AEMBGameMode {
+        +RespawnPlayer(AController)
+    }
+    class UEMBRespawnSubsystem {
+        -TMap Bindings
+        -TMap BagsByOwner
+        +BindRespawnPoint(APlayerState, AEMBBuildablePiece)
+        +GetRespawnTransform(AController, FTransform) bool
+        +DropDeathBag(AController, FVector)
+        +GetPlayerKey(AController) FString
+        +RestoreBinding(FString, AEMBBuildablePiece)
+        +RestoreBag(FString, FTransform, TArray)
+        +GetPersistentBags(TArray)
+        +TryConsumeSleepBenefit(AController) bool
+    }
+    class AEMBDeathBag {
+        -int32 OwnerPlayerId
+        -FString OwnerKey
+        -TArray Contents
+        +InitializeBag(FString, int32, bool, TArray)
+        +Interact(APawn)
+    }
+    class AEMBBuildablePiece {
+        #bool bIsRespawnPoint
+        #float HeatRadius, HeatBonus
+        #float PurifyRadius, PurifyRate
+        +ApplyRowFunctions(FEMBBuildPieceRow)
+        +IsRespawnPoint() bool
+        +IsBed() bool
+        +Interact(APawn)
+        +IsSheltered() bool
+    }
+    class UEMBSurvivalComponent {
+        -float Hunger
+        -float Thirst
+        -float FeltTemperature
+        -float Corruption
+        -uint8 PublicCorruptionTier
+        +RequestConsume(FName)
+        +AddCorruption(float)
+        +ReduceCorruption(float)
+        +ApplyRespawnValues()
+        +ApplyReviveValues()
+        +SetPassiveModifiers(FEMBPassiveModifiers)
+        +SetInsulation(float)
+        +ExportSaveData(FEMBSurvivalSaveData)
+        +ImportSaveData(FEMBSurvivalSaveData)
+        -Server_Consume(FName)
+        -SurvivalTick()
+        +OnSurvivalChanged
+    }
+    class UEMBEnvironmentSubsystem {
+        +GetAmbientTemperatureAt(FVector) float
+        +GetCorruptionRateAt(FVector) float
+        +IsNight() bool
+        +GetHeatBonusAt(FVector) float
+        +GetPurificationRateAt(FVector) float
+        +SetTimeOfDay(float)
+        +SetWeatherTemperatureOffset(float)
+        +RegisterHeatSource(AActor, float, float)
+        +RegisterPurifier(AActor, float, float)
+        +OnEnvironmentChanged
+    }
+    class AEMBEnvironmentVolume {
+        +float BaseTemperatureC
+        +float CorruptionRatePerSecond
+        +int32 Priority
+        +ContainsPoint(FVector) bool
+    }
+    class UEMBStatsComponent {
+        +SetSurvivalModifiers(float, float, float)
+        +ReviveWithFraction(float, float)
+    }
+    class UEMBCombatComponent {
+        +WasKilledByDamageOverTime() bool
+        +ResetFromDeath()
+        +GrantSpawnProtection(float)
+        +SetExtraFireResistance(float)
+        +GetFireResistance() float
+    }
+    class FEMBConsumableRow {
+        <<DataTable row>>
+    }
+
+    UActorComponent <|-- UEMBSurvivalComponent
+    UWorldSubsystem <|-- UEMBRespawnSubsystem
+    UWorldSubsystem <|-- UEMBEnvironmentSubsystem
+    AActor <|-- AEMBDeathBag
+    AActor <|-- AEMBEnvironmentVolume
+    AGameModeBase <|-- AEMBGameMode
+    IEMBInteractable <|.. AEMBPlayerCharacter : réanimation 4 s
+    IEMBInteractable <|.. AEMBDeathBag : ramasser
+    IEMBInteractable <|.. AEMBBuildablePiece : se lier, dormir
+
+    AEMBPlayerCharacter *-- UEMBSurvivalComponent
+    AEMBPlayerCharacter *-- UEMBStatsComponent
+    AEMBPlayerCharacter *-- UEMBCombatComponent
+    AEMBPlayerCharacter ..> AEMBGameMode : RespawnNow
+    AEMBPlayerCharacter ..> IEMBInteractable : Server_Interact, maintien serveur
+    AEMBGameMode ..> UEMBRespawnSubsystem : DropDeathBag, GetRespawnTransform
+    AEMBGameMode ..> UEMBSurvivalComponent : ApplyRespawnValues
+    AEMBGameMode ..> UEMBCombatComponent : GrantSpawnProtection
+    UEMBRespawnSubsystem o-- AEMBDeathBag : un par joueur
+    UEMBRespawnSubsystem o-- AEMBBuildablePiece : liaison (pointeur faible)
+    AEMBBuildablePiece ..> UEMBRespawnSubsystem : BindRespawnPoint, TryConsumeSleepBenefit
+    AEMBBuildablePiece ..> UEMBEnvironmentSubsystem : RegisterHeatSource, RegisterPurifier
+    AEMBEnvironmentVolume ..> UEMBEnvironmentSubsystem : RegisterVolume
+    UEMBSurvivalComponent ..> UEMBEnvironmentSubsystem : interrogé à 1 Hz
+    UEMBSurvivalComponent ..> UEMBStatsComponent : SetSurvivalModifiers
+    UEMBSurvivalComponent ..> UEMBCombatComponent : SetExtraFireResistance, ApplyHitToActor (dégâts continus), OnHitReceived
+    UEMBSurvivalComponent ..> FEMBConsumableRow : lit
+    UEMBProgressionComponent ..> UEMBSurvivalComponent : SetPassiveModifiers
+```
+
+**Remarques**
+- **Deux sous-systèmes, deux portées** : `UEMBRespawnSubsystem` n'écrit que sur le serveur (les clients ne l'utilisent pas) ; `UEMBEnvironmentSubsystem` existe sur chaque machine, **sans réplication** : seuls ses consommateurs serveur (la survie) comptent, et un futur système d'heure ou de météo devra pousser ses valeurs sur le serveur (et chez les clients s'ils veulent les afficher).
+- **Clé d'un joueur** pour les liaisons et les sacs : identifiant stable de la sauvegarde (§ 6.5) ; `Session_<PlayerId>` pour un joueur non persisté (identifiant en doublon), dont ni le sac ni la liaison ne sont sauvegardés.
+- **Pièces fonctionnelles** : `ApplyRowFunctions` recopie les colonnes v1.3 de la ligne (à la pose comme au chargement, avant `BeginPlay`) ; `bIsRespawnPoint` est répliqué (invite d'interaction), les rayons et valeurs de chaleur et de purification restent **serveur**. Lit = point de réapparition de catégorie `Furniture` : « Se lier » et « Dormir » (Corruption −50 si une pièce le couvre, `IsSheltered`, au plus toutes les 120 s **par joueur**).
+
+### 2.13 Cycle de vie du joueur (mort, réanimation, réapparition)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Vivant : PostLogin, RestartPlayer
+    Vivant --> Protege : réapparition ou réanimation (GrantSpawnProtection 3 s)
+    Protege --> Vivant : 3 s écoulées ou première attaque
+    Vivant --> MortEnAttente : PV = 0 (combat en Dead) ou Corruption 100 ou FellOutOfWorld
+    Protege --> MortEnAttente : chute hors du monde (FellOutOfWorld)
+
+    state MortEnAttente {
+        [*] --> Attente
+        Attente --> Reanimable : allié vivant à 250 cm ou moins
+        Reanimable --> Attente : allié éloigné, mort ou étourdi (contrôle serveur 0,25 s)
+        Reanimable --> Reanime : maintien d'Interagir 4 s
+        Attente --> DemandeAcceptee : RequestRespawn après 3 s (option bRespawnRequiresNoLivingAlly)
+        Attente --> DemandeAcceptee : timer automatique 30 s
+    }
+
+    MortEnAttente --> Protege : Reanime (PV 30 %, endurance 50 %, Corruption plafonnée à 60, inventaire conservé, pas de sac)
+    MortEnAttente --> Reapparition : DemandeAcceptee
+    Reapparition --> Protege : nouveau pawn (point lié ou PlayerStart, PV pleins, faim et soif 60, Corruption 0), sac déposé
+    MortEnAttente --> Deconnecte : Logout pendant l'attente (aucun sac)
+    Vivant --> Deconnecte : Logout
+    Deconnecte --> [*] : CapturePlayer (un mort est enregistré vivant, § 6.2)
+```
+
+Notes de lecture :
+- `Protege` n'est pas un état distinct dans le code : c'est le drapeau `bSpawnProtected` du combat (compté comme `State.Combat.Invulnerable`). `MortEnAttente` correspond à `bDeadAwaitingRespawn` (répliqué à tous, tag `State.Player.DeadAwaitingRespawn`) **et** à l'état `Dead` du combat.
+- À la mort, le mouvement est coupé (`DisableMovement`) mais **pas les entrées** : la touche *Interagir* (ou `IA_Respawn`) sert à demander la réapparition. Pas de ragdoll : le montage de mort tient la pose, la capsule reste cohérente pour une réanimation.
+- **Zone létale** : si la mort vient de dégâts continus (lave, faim, zone de feu…) ou d'une chute hors du monde (`FellOutOfWorld` est surchargé pour tuer par le flux normal au lieu de détruire le pawn), `WasKilledInLethalZone` est vrai et le sac est déposé au **dernier point sûr** relevé par la sauvegarde.
+- `bRespawnRequiresNoLivingAlly` (faux par défaut, arbitrage v1.3) : vrai, il impose en coop d'attendre l'échéance de 30 s tant qu'un allié vivant peut réanimer.
+
+### 2.14 Séquence « mort → sac → réapparition au lit »
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor J as Joueur mort (client propriétaire)
+    participant PCc as AEMBPlayerCharacter (client)
+    participant PCs as AEMBPlayerCharacter (serveur)
+    participant CC as UEMBCombatComponent (serveur)
+    participant GM as AEMBGameMode (serveur)
+    participant SAV as UEMBSaveSubsystem (serveur)
+    participant RS as UEMBRespawnSubsystem (serveur)
+    participant BAG as AEMBDeathBag
+    participant NP as Nouveau pawn (serveur)
+    participant O as Autres clients
+
+    Note over J,PCs: plus tôt : le joueur a interagi avec son lit, BindRespawnPoint (dernière liaison retenue)
+    CC->>CC: OnDeath puis TransitionTo(Dead), bKilledByDamageOverTime mémorisé
+    CC-->>PCs: OnCombatStateChanged(Dead) puis HandleCombatStateChanged
+    PCs->>PCs: DisableMovement, BeginDeath : maintien d'interaction annulé, bKilledInLethalZone calculé
+    PCs->>PCs: bDeadAwaitingRespawn = vrai, DeathServerTime, timer de réapparition automatique 30 s
+    PCs-->>O: bDeadAwaitingRespawn et DeathServerTime répliqués puis OnRep : OnDeadAwaitingRespawnChanged(vrai)
+    J->>PCc: Interagir (ou IA_Respawn) après 3 s
+    PCc->>PCs: Server_RequestRespawn (Reliable, WithValidation)
+    PCs->>PCs: refus si moins de 3 s (ou allié vivant avec bRespawnRequiresNoLivingAlly avant 30 s)
+    PCs->>GM: RespawnNow puis RespawnPlayer(Controller)
+    GM->>GM: garde-fou : jamais pour un joueur vivant
+    opt Mort en zone létale
+        GM->>SAV: GetLastSafeTransform(clé du joueur) : lieu du sac = dernier point sûr
+    end
+    GM->>RS: DropDeathBag(Controller, lieu) AVANT de détruire le pawn
+    RS->>RS: ancien sac du joueur détruit avec son contenu (un seul sac actif)
+    RS->>RS: RemoveAllResources du pawn mort, lieu projeté au sol (trace 500 cm), sinon point sûr
+    RS->>BAG: SpawnActorDeferred, InitializeBag(clé, PlayerId, persistant, contenu), FinishSpawning
+    BAG-->>O: acteur répliqué (OwnerPlayerId seul, contenu jamais répliqué)
+    GM->>RS: GetRespawnTransform : lit lié valide, 150 cm devant lui, posé au sol
+    alt Aucun point lié valide (lit détruit, effondré, jamais lié)
+        GM->>GM: FindPlayerStart (sinon lieu de la mort)
+    end
+    GM->>PCs: UnPossess puis Destroy de l'ancien pawn
+    GM->>NP: RestartPlayerAtTransform (échelle 1) puis PossessedBy : passifs de progression réappliqués
+    GM->>NP: Survival ApplyRespawnValues (faim 60, soif 60, Corruption 0, température neutre)
+    GM->>NP: Combat GrantSpawnProtection(3 s)
+    Note over J,BAG: plus tard : le joueur revient, Server_Interact(sac) puis CanInteract compare les clés stables (serveur), Interact transfère tout, le sac est détruit s'il est vide
+```
+
+### 2.15 Séquence « réanimation par un allié »
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor A as Allié vivant (client propriétaire)
+    participant ACc as Personnage de l'allié (client)
+    participant ACs as Personnage de l'allié (serveur)
+    participant M as Personnage mort (serveur)
+    participant MS as Jauges, survie, combat du mort (serveur)
+    participant O as Clients
+
+    loop Timer de balayage (client local)
+        ACc->>ACc: UpdateInteractionTarget : CanInteract(mort) vrai si mort en attente, allié vivant
+        ACc-->>A: OnInteractionTargetChanged(mort, « Réanimer »)
+    end
+    A->>ACc: Interagir Started (pas de déclencheur Hold : la durée est gérée par le serveur)
+    ACc->>ACs: Server_Interact(mort) (Reliable, WithValidation)
+    ACs->>ACs: anti-inondation 10 requêtes/s, CanActNow (vivant, non étourdi, pas en attente)
+    ACs->>ACs: distance ≤ 250 cm + tolérance, CanInteract, GetInteractionHoldTime = 4,0 s
+    loop Toutes les 0,25 s (ServerTickInteractionHold)
+        ACs->>ACs: allié toujours apte, à portée, mort toujours en attente ?
+        alt Allié éloigné, mort, étourdi, ou relâchement (Server_CancelInteract)
+            ACs-->>ACc: Client_InteractionEnded(faux) puis OnInteractionHoldEnded(faux)
+        end
+    end
+    ACs->>ACs: 4 s atteintes : portée vérifiée STRICTE (250 cm)
+    ACs->>M: Interact(allié)
+    M->>MS: ReviveWithFraction(0.30, 0.50) : PV 30 %, endurance 50 %, poise pleine
+    M->>MS: ApplyReviveValues : Corruption plafonnée à 60, intoxication purgée
+    M->>MS: ResetFromDeath (Dead vers Idle) puis GrantSpawnProtection(3 s)
+    M->>M: EndDeathByRevive : timer de 30 s annulé, bDeadAwaitingRespawn = faux, mouvement rétabli
+    M-->>O: bDeadAwaitingRespawn, CurrentState, Health répliqués : OnDeadAwaitingRespawnChanged(faux)
+    ACs-->>ACc: Client_InteractionEnded(vrai)
+    Note over M: aucun sac, inventaire intact, progression jamais touchée
+```
 
 ---
 
@@ -987,20 +1483,27 @@ Garde-fou central : **aucune écriture n'est possible avant `LoadState = Loaded`
 | Délégué (type) | Propriétaire | Diffusé où | Abonnés dans le code |
 |---|---|---|---|
 | `OnAttributeChanged` (`FEMBOnAttributeChanged` : type, valeur, max) | `UEMBStatsComponent` | serveur (à chaque modification) **et** clients (RepNotify `OnRep_Health/Stamina/Poise/MaxHealth`) | aucun (HUD prévu) |
-| `OnDeath` (`FEMBOnDeath` : tueur) | `UEMBStatsComponent` | **serveur uniquement** | `UEMBCombatComponent::HandleOwnerDeath` → `Dead` ; `AEMBDragonBoss::HandleStatsDeath` |
-| `OnPoiseBroken` (`FEMBOnPoiseBroken` : instigateur) | `UEMBStatsComponent` | **serveur uniquement** | `UEMBCombatComponent::HandleOwnerPoiseBroken` → `Staggered` 0,8 s ; `AEMBDragonBoss::HandlePoiseBroken` → étourdi 4 s |
-| `OnCombatStateChanged` (`FEMBOnCombatStateChanged` : ancien, nouveau) | `UEMBCombatComponent` | serveur (`TransitionTo`) et clients (`OnRep_CurrentState`) | `AEMBPlayerCharacter::HandleCombatStateChanged` (arrêt du sprint, désactivation à la mort) |
+| `OnDeath` (`FEMBOnDeath` : tueur) | `UEMBStatsComponent` | **serveur uniquement** | `UEMBCombatComponent::HandleOwnerDeath` → `Dead` ; `AEMBBossBase::HandleStatsDeath` |
+| `OnPoiseBroken` (`FEMBOnPoiseBroken` : instigateur) | `UEMBStatsComponent` | **serveur uniquement** | `UEMBCombatComponent::HandleOwnerPoiseBroken` → `Staggered` 0,8 s ; `AEMBBossBase::HandlePoiseBroken` → étourdi (dragon et Colosse 4 s, Nyxariel 3 s) |
+| `OnCombatStateChanged` (`FEMBOnCombatStateChanged` : ancien, nouveau) | `UEMBCombatComponent` | serveur (`TransitionTo`) et clients (`OnRep_CurrentState`) | `AEMBPlayerCharacter::HandleCombatStateChanged` (arrêt du sprint ; à la mort : mouvement coupé, `BeginDeath` côté serveur) |
 | `OnParrySuccess` (`FEMBOnParrySuccess` : attaquant) | `UEMBCombatComponent` | partout via `Multicast_ParrySuccess` (Unreliable) | aucun (effets prévus) |
-| `OnHitReceived` (`FEMBOnHitReceived` : coup, résultat) | `UEMBCombatComponent` | partout via `Multicast_BroadcastHitReceived` (Unreliable) ; **jamais** pour les dégâts continus (`bDamageOverTime`) | aucun (effets prévus) |
+| `OnHitReceived` (`FEMBOnHitReceived` : coup, résultat) | `UEMBCombatComponent` | partout via `Multicast_BroadcastHitReceived` (Unreliable) ; **jamais** pour les dégâts continus (`bDamageOverTime`) | **v1.3** : `UEMBSurvivalComponent::HandleHitReceived` (serveur : Corruption des coups reçus) ; effets prévus |
 | `OnHitConfirmed` (`FEMBOnHitConfirmed` : cible, résultat, point d'impact) — **nouveau v1.1** | `UEMBCombatComponent` de l'**attaquant** | client propriétaire de l'attaquant (et hôte) via `Client_ConfirmHit` (Unreliable), pour tout coup de lame non `Ignored` (dragon, pièce, créature) | aucun (marqueur de coup, son, hit-stop prévus) |
 | `OnInventoryChanged` (`FEMBOnInventoryChanged` : ressource, quantité) | `UEMBInventoryComponent` | serveur (ressource précise) ; propriétaire après réplication (`NAME_None` = tout rafraîchir) | `AEMBPlayerCharacter::HandleInventoryChanged` → `UpdateEncumbrance` → `SetEncumbranceRatio` (serveur et propriétaire) ; UI prévue |
 | `OnBuildModeChanged` (`FEMBOnBuildModeChanged` : bool) | `UEMBBuildingComponent` | client local | aucun (UI prévue) |
 | `OnPlacementResult` (`FEMBOnPlacementResult` : résultat, intégrité) | `UEMBBuildingComponent` | client local (aperçu) et réponse serveur (`Client_PlacementResult`) | aucun (UI prévue) |
-| `OnPhaseChanged` (`FEMBOnDragonPhaseChanged` : nouvelle, ancienne) | `AEMBDragonBoss` | serveur (`FinishPhaseTransition`) et clients (`OnRep_CurrentPhase`) | `AEMBDragonArena::HandleBossPhaseChanged` |
-| `OnPhaseTransitionStarted` (`FEMBOnDragonPhaseTransitionStarted` : phase visée) | `AEMBDragonBoss` | serveur et clients (`OnRep_IsTransitioning`, phase visée supposée = courante + 1) | aucun |
-| `OnStunChanged` (`FEMBOnDragonStunChanged` : bool) | `AEMBDragonBoss` | serveur et clients (`OnRep_IsStunned`) | aucun |
-| `OnBossDefeated` (`FEMBOnBossDefeated` : tag d'événement, tueur) | `AEMBDragonBoss` | **serveur uniquement**, tag `Event.Boss.Killed.Dragon` | aucun abonné C++ : la progression est appelée **directement** (`UEMBProgressionSubsystem::NotifyWorldEvent` dans `HandleStatsDeath`) ; le délégué reste disponible pour la mise en scène Blueprint |
-| `OnEncounterEnded` (`FEMBOnDragonEncounterEnded`) — **nouveau v1.2** | `AEMBDragonBoss` | serveur (mort au combat, `ApplyDefeatedFromSave`) et clients (`OnRep_IsDead`) | `AEMBDragonArena::HandleEncounterEnded` → `EnterFinalCalmState` |
+| `OnPhaseChanged` (`FEMBOnBossPhaseChanged` : nouvelle, ancienne) — type renommé v1.3 | `AEMBBossBase` | serveur (`FinishPhaseTransition`) et clients (`OnRep_CurrentPhase`) | `AEMBDragonArena::HandleBossPhaseChanged` ; arène du Colosse (allumage des obélisques en P2) ; arène de Nyxariel (mise en scène) |
+| `OnPhaseTransitionStarted` (`FEMBOnBossPhaseTransitionStarted` : phase visée) | `AEMBBossBase` | serveur et clients (`OnRep_IsTransitioning`, phase visée supposée = courante + 1) | `AEMBSeraphBoss::HandlePhaseTransitionStarted` (pool de projectiles porté à 72 avant la phase 2) |
+| `OnStunChanged` (`FEMBOnBossStunChanged` : bool) | `AEMBBossBase` | serveur et clients (`OnRep_IsStunned`) | aucun |
+| `OnBossDefeated` (`FEMBOnBossDefeated` : tag d'événement, tueur) | `AEMBBossBase` | **serveur uniquement**, tag `GetDefeatedEventTag()` | aucun abonné C++ : la progression est appelée **directement** (`NotifyWorldEvent` dans `HandleStatsDeath`) ; disponible pour la mise en scène Blueprint |
+| `OnEncounterEnded` (`FEMBOnBossEncounterEnded`) | `AEMBBossBase` | serveur (mort au combat, `ApplyDefeatedFromSave`) et clients (`OnRep_IsDead`) | les trois arènes (état final calme : lave et foudre arrêtées, obélisques éteints, cloches silencieuses) ; `AEMBSeraphBoss::HandleEncounterEnded` |
+| `OnObeliskDestroyed` (`FEMBOnObeliskDestroyed` : obélisque) — **v1.3** | `AEMBObelisk` | serveur et clients | aucun abonné C++ (le Colosse compte les obélisques intacts à la demande) |
+| `OnBellStruck` (`FEMBOnBellStruck` : cloche, frappeur) — **v1.3** | `AEMBSeraphBell` | **serveur uniquement** | `AEMBSeraphArena` (étourdit Nyxariel 2 s s'il vole, puis `MarkUsed`) |
+| `OnDeadAwaitingRespawnChanged` (`FEMBOnDeadAwaitingRespawnChanged` : bool) — **v1.3** | `AEMBPlayerCharacter` | serveur et clients (`OnRep_DeadAwaitingRespawn`) | aucun (écran de mort, UI de groupe prévus) |
+| `OnInteractionTargetChanged` (cible, invite) — **v1.3** | `AEMBPlayerCharacter` | client local (balayage par timer) | aucun (invite d'interface prévue) |
+| `OnInteractionHoldEnded` (`bCompleted`) — **v1.3** | `AEMBPlayerCharacter` | client propriétaire (`Client_InteractionEnded`) | aucun (barre de maintien prévue) |
+| `OnSurvivalChanged` (faim, soif, température, Corruption) — **v1.3** | `UEMBSurvivalComponent` | serveur (1 Hz) et propriétaire (`OnRep_Gauges`) | aucun (HUD prévu) |
+| `OnEnvironmentChanged` — **v1.3** | `UEMBEnvironmentSubsystem` | machine locale, sur changement structurel (jour/nuit, météo, volume, source) ; **pas** à chaque mise à jour de l'heure | aucun |
 | `OnXPChanged` (`FEMBOnXPChanged` : XP totale, niveau) — **v1.2** | `UEMBProgressionComponent` | serveur (`AddXP`) et clients (`OnRep_Level`, `OnRep_TotalXP` : tous les clients) | aucun (UI prévue) |
 | `OnLevelUp` (`FEMBOnLevelUp` : niveau) — **v1.2** | `UEMBProgressionComponent` | serveur (un appel par niveau gagné) et clients (`OnRep_Level`, sauf première réception) | aucun (UI prévue) |
 | `OnPointsChanged` (`FEMBOnPointsChanged` : points de glyphe, points d'Éveil) — **v1.2** | `UEMBProgressionComponent` | serveur et propriétaire (`OnRep_Points`) | aucun (UI prévue) |
@@ -1010,9 +1513,9 @@ Garde-fou central : **aucune écriture n'est possible avant `LoadState = Loaded`
 | `OnSaveCompleted` (`FEMBOnSaveCompleted` : succès) — **v1.2** | `UEMBSaveSubsystem` | serveur, fin d'écriture (asynchrone ou bloquante) | aucun (UI prévue). **Pas** diffusé quand une demande est ignorée (chargement non terminé, écritures bloquées, rencontre de boss) |
 | `OnLoadCompleted` (`FEMBOnLoadCompleted` : sauvegarde trouvée) — **v1.2** | `UEMBSaveSubsystem` | serveur, fin du chargement (faux = monde vierge) | aucun |
 
-Événements Blueprint (`BlueprintImplementableEvent`, mise en scène) : `AEMBDragonBoss::BP_OnAttackTelegraph`, `BP_OnShowGroundMarker` ; `AEMBDragonArena::OnArenaPhaseApplied`, `OnAshStormChanged` (tempête de cendres de phase 3, purement visuelle), `OnArenaFinalCalmState` (**v1.2**, état final calme après la rencontre).
+Événements Blueprint (`BlueprintImplementableEvent`, mise en scène) : `AEMBBossBase::BP_OnAttackTelegraph`, `BP_OnShowGroundMarker` ; `AEMBDragonArena::OnArenaPhaseApplied`, `OnAshStormChanged` (tempête de cendres de phase 3, purement visuelle), `OnArenaFinalCalmState` ; **v1.3** : `AEMBColossusBoss::BP_OnRuneRing`, `BP_OnResonanceFinished` ; `AEMBObelisk::BP_OnLitChanged`, `BP_OnHealthChanged`, `BP_OnDestroyed` ; `AEMBSeraphBoss::BP_OnTipFlash` ; `AEMBSeraphBell::BP_OnRung`, `BP_OnUsedChanged`, `BP_OnSilenced` ; `AEMBSeraphShadow::BP_OnEcho`, `BP_OnDissipated` ; `AEMBProjectile::BP_OnLaunched`, `BP_OnReflected`, `BP_OnEnded`.
 
-Délégués moteur utilisés : `UAIPerceptionComponent::OnTargetPerceptionUpdated` (contrôleur du dragon), `FOnMontageEnded` (fin d'action de la FSM, protégée par `ActionToken`), délégués de timers (dont `SetTimerForNextTick` pour le regroupement des destructions).
+Délégués moteur utilisés : `UAIPerceptionComponent::OnTargetPerceptionUpdated` (contrôleur des boss), chevauchement et arrêt du projectile (`HandleBeginOverlap`, `HandleProjectileStop`), `FOnMontageEnded` (fin d'action de la FSM, protégée par `ActionToken`), délégués de timers (dont `SetTimerForNextTick` pour le regroupement des destructions).
 
 ### 3.2 Gameplay Tags (`EMBTags`, `EMBGameplayTags.h`)
 
@@ -1020,22 +1523,27 @@ Tags natifs déclarés par `UE_DECLARE_GAMEPLAY_TAG_EXTERN` : utilisables sans `
 
 | Famille | Tags | Utilisation réelle dans le code |
 |---|---|---|
-| `State.*` | `State.Combat.Invulnerable`, `.Staggered`, `.HyperArmor`, `State.Dead` | Joueur : `HasStateTag`, notify `IFrames` (tag vide = Invulnerable). Dragon : `StateTags` reconstruits localement (`RefreshStateTags`), exposés par `IGameplayTagAssetInterface`. |
+| `State.*` | `State.Combat.Invulnerable`, `.Staggered`, `.HyperArmor`, `State.Dead` ; **v1.3** : `State.Survival.Whispers` (Corruption ≥ 25), `State.Player.DeadAwaitingRespawn` | Joueur : `HasStateTag`, notify `IFrames` (tag vide = Invulnerable) ; **v1.3** : le personnage implémente `IGameplayTagAssetInterface` (invulnérable, étourdi, mort, en attente de réapparition) ; `Whispers` est posé par la survie (`HasSurvivalTag`). Boss : `StateTags` reconstruits localement (`RefreshStateTags`), exposés par `IGameplayTagAssetInterface`. |
 | `Attack.Player.*` | `.Light`, `.Heavy`, `.Charged` | `FEMBAttackDefinition::AttackTag` → `FEMBHitData::AttackTag` |
-| `Attack.Dragon.*` | 11 attaques | Clé fonctionnelle de `FEMBDragonAttackRow` (cache `AttackRowByTag`, recharges, historique anti-répétition) ; `Cataclysm` forcé par `BTTask_EMBDragonBreath::bUseCataclysmTag` |
-| `Boss.Phase.*` | `1`, `2`, `3` | `AEMBDragonBoss::GetPhaseTag`, inclus dans `StateTags` |
+| `Attack.Dragon.*` | 11 attaques | Clé fonctionnelle des lignes d'attaque (cache `AttackRowByTag`, recharges, historique anti-répétition) ; `Cataclysm` forcé par `BTTask_EMBDragonBreath::bUseCataclysmTag` |
+| `Attack.Guardian.*`, `Attack.Seraph.*` (**v1.3**, namespace `EMBBossTags`, `EMBBossTags.h`) | 9 + 9 attaques | Même rôle pour `DT_ColossusAttacks` et `DT_SeraphAttacks` ; lus aussi par les classes filles (enchaînement, événements programmés, rejeu des clones) |
+| `Boss.Phase.*` | `1`, `2`, `3` | `AEMBBossBase::GetPhaseTag`, inclus dans `StateTags` |
 | `Building.Material.*`, `Building.Category.*` | 4 + 8 tags | Déclarés ; le code utilise les **énumérations miroirs** `EEMBBuildMaterial` / `EEMBPieceCategory` |
 | `Building.NoBuildZone` | 1 | Zone interdite (avec le tag d'acteur `NoBuild`) dans `UEMBBuildingComponent::IsNoBuildZone` |
-| `Event.*` | `Event.Boss.Killed.Guardian/.Seraph/.Dragon`, `Event.Location.Discovered.SunkenLibrary/.AshAltar/.StarWell` | `Event.Boss.Killed.Dragon` : émis par le dragon (`NotifyWorldEvent`), enregistré dans `WorldEvents` et sauvegardé. `Event.Location.Discovered.*` : posés sur les `AEMBDiscoveryVolume` du niveau (`NotifyPlayerEvent`), enregistrés par joueur (`ObtainedTriggers`). Les trois tags de boss donnent un point d'Éveil (`IsBossKilledTag`) ; **Gardien et Séraphe n'ont aucun émetteur** (boss non codés). Déclencheurs des glyphes secrets : `FEMBGlyphRow::SecretTrigger` |
+| `Event.*` | `Event.Boss.Killed.Guardian/.Seraph/.Dragon`, `Event.Location.Discovered.SunkenLibrary/.AshAltar/.StarWell` | `Event.Boss.Killed.*` : émis à la mort de chaque boss (`GetDefeatedEventTag` du Colosse, de Nyxariel et du dragon, puis `NotifyWorldEvent`), enregistrés dans `WorldEvents` et sauvegardés. `Event.Location.Discovered.*` : posés sur les `AEMBDiscoveryVolume` du niveau (`NotifyPlayerEvent`), enregistrés par joueur (`ObtainedTriggers`). Les trois tags de boss donnent un point d'Éveil (`IsBossKilledTag`). Déclencheurs des glyphes secrets : `FEMBGlyphRow::SecretTrigger` |
 | `Glyph.*`, `Skill.*` (tags `.ini`, non natifs) | un tag par glyphe et par nœud (colonnes `GrantedTag` de `DT_Glyphs.csv` et `DT_SkillNodes.csv` ; déclarés dans `Config/Tags/EmberfallGlyphs.ini` et `EmberfallSkills.ini`, 20 tags `Skill.*`) | Agrégés dans `UEMBProgressionComponent::GrantedTags` (`HasGrantedTag`) ; **aucun système ne les lit encore** (recettes, compétences actives non codées). La construction se verrouille par **nom de glyphe** (`RequiredGlyph`, `HasGlyph`), pas par tag |
 
 ### 3.3 Interfaces
 
 | Interface | Implémentée par | Rôle |
 |---|---|---|
-| `IEMBHitReceiver` (C++ natif, `CannotImplementInterfaceInBlueprint`) | `AEMBDragonBoss` | Traitement autonome d'un coup : invulnérabilité de transition, `BeginEncounter` avant tout dégât, points faibles par os (remontée de la hiérarchie du squelette), critique ×3 sur boss étourdi, ×1,5 pendant la vulnérabilité après le piqué, menace, posture (ignorée pendant l'étourdissement). Reçoit aussi la posture de parade (coup à 0 dégât, 35 de posture). |
+| `IEMBHitReceiver` (C++ natif, `CannotImplementInterfaceInBlueprint`) | `AEMBBossBase` (donc les trois boss) | Traitement autonome d'un coup : invulnérabilité de transition, `BeginEncounter` avant tout dégât, **résistance par type** (PV seulement, pas la posture), points faibles par os (permanents ou conditionnels, remontée de la hiérarchie du squelette), critique ×3 sur boss étourdi, bonus pendant la vulnérabilité (dragon et Nyxariel ×1,5), menace, posture (ignorée pendant l'étourdissement ; hook `OnPoiseDamageTaken`). Reçoit aussi la posture de parade (coup à 0 dégât, 35 de posture). |
 | `IEMBHitReceiver` | `AEMBBuildablePiece` | Dégâts structurels : physique ×1,0 ; feu ×1,5 sur le bois, ×0,5 sur les autres matériaux ; autres types ×0,5. Retourne `Killed` si la pièce tombe à 0 PV. |
-| `IGameplayTagAssetInterface` (moteur) | `AEMBDragonBoss` | Expose `Boss.Phase.N` et les tags d'état (lecture par l'UI, les décorateurs ou d'autres systèmes). |
+| `IEMBHitReceiver` — **v1.3** | `AEMBObelisk` | 500 PV ; détruit à 0 (collision coupée). Touché par les joueurs et par la charge du Colosse. |
+| `IEMBHitReceiver` — **v1.3** | `AEMBSeraphBell` | Aucun dégât ; un coup de **joueur** sonne la cloche (intervalle minimal 0,4 s) et prévient l'arène. |
+| `IEMBHitReceiver` — **v1.3** | `AEMBSeraphShadow` | Tout coup d'un joueur dissipe le clone ; les autres sources sont ignorées. |
+| `IEMBInteractable` (C++ natif) — **v1.3** | `AEMBPlayerCharacter` (réanimation, maintien 4 s), `AEMBDeathBag` (ramasser, propriétaire seul), `AEMBBuildablePiece` (si `bIsRespawnPoint` : « Se lier », et « Dormir » pour un lit) | `CanInteract` sur serveur **et** client (invite) ; `Interact` serveur seul ; `GetInteractionHoldTime` (0 = instantané). Le serveur revérifie la portée (250 cm + 50 cm de tolérance pendant le maintien, stricte à la réussite) et `CanInteract`. |
+| `IGameplayTagAssetInterface` (moteur) | `AEMBBossBase` ; **v1.3** : `AEMBPlayerCharacter` | Boss : `Boss.Phase.N` et tags d'état. Joueur : invulnérable, étourdi, mort, en attente de réapparition. |
 
 ### 3.4 Routage des dégâts : `UEMBCombatComponent::ApplyHitToActor`
 
@@ -1043,23 +1551,25 @@ Fonction **statique**, appelée uniquement sur le serveur (elle renvoie `Ignored
 
 ```
 ApplyHitToActor(Target, Hit)
- 1. Target implémente IEMBHitReceiver ?      -> ReceiveEMBHit(Hit)          (dragon, pièces de construction)
+ 1. Target implémente IEMBHitReceiver ?      -> ReceiveEMBHit(Hit)          (boss, pièces, obélisques, cloches, clones)
  2. sinon Target a un UEMBCombatComponent ?  -> ReceiveHit(Hit)             (joueur : esquive, parade, garde, dégâts)
  3. sinon Target a un UEMBStatsComponent ?   -> ApplyDamage (+ ApplyPoiseDamage sauf bDamageOverTime) (créatures simples, prévues)
  4. sinon                                    -> Ignored
 ```
 
-Appelants réels : `UEMBCombatComponent::SweepBlade` (lame du joueur, avec bonus de riposte ×3 sur l'attaquant paré pendant 1,5 s, puis `Client_ConfirmHit`) ; `AEMBDragonBoss::ApplyHitToPawns` (zones et cônes), `TickBurn` (brûlure, `bDamageOverTime`), `TickFireZones` (zones de feu, `bDamageOverTime`) ; `AEMBDragonArena::TickLava` (lave, `bDamageOverTime`), `ResolveLightningImpact` (foudre de phase 3, coup normal esquivable, non parable).
+Appelants réels : `UEMBCombatComponent::SweepBlade` (lame du joueur, avec bonus de riposte ×3 sur l'attaquant paré pendant 1,5 s, puis `Client_ConfirmHit`) ; `AEMBBossBase::ApplyHitToPawns` (zones, cônes, anneaux runiques, charge, plongeons), `TickBurn` (brûlure, `bDamageOverTime`), `TickFireZones` (zones de feu, `bDamageOverTime`) ; `AEMBSeraphBoss::ResolveDashContact` (dash) ; `AEMBProjectile` (plumes et lance, au chevauchement ; lance renvoyée sur le boss en cas de parade parfaite) ; `AEMBDragonArena::TickLava` (lave, `bDamageOverTime`), `ResolveLightningImpact` (foudre de phase 3, coup normal esquivable, non parable) ; **v1.3** `UEMBSurvivalComponent` (faim, soif, froid, chaud, intoxication : une frappe regroupée par seconde, `bDamageOverTime`).
+
+Compléments v1.3 de la résolution côté joueur : les dégâts de **feu** sont multipliés par (1 − `GetFireResistance()`) (passif `FireResistance` + huile, plafond 0,9) ; `FEMBHitData::CorruptionAmount` (plumes 5, Halo noir 20) est ajouté à la Corruption de la cible par la survie, sinon un coup de type Corruption en donne `clamp(0,2 × dégâts, 2, 20)` ; la protection de réapparition bloque aussi les dégâts continus.
 
 Résolution côté joueur (`ReceiveHit`) : un coup **`bDamageOverTime`** (lave, brûlure, zones de feu) applique directement ses dégâts — ni esquive, ni garde, ni parade, ni counter-hit, ni multicast. Sinon `ResolveHit`, dans cet ordre : **i-frames** (`Dodged`) → **parade parfaite** de face, attaque parable (`Parried` ; ouvre la fenêtre de riposte ; `ApplyParryPosture` envoie 35 de posture à l'attaquant **via `ReceiveEMBHit`** s'il implémente `IEMBHitReceiver`, sinon directement sur ses jauges ; `Multicast_ParrySuccess`) → **garde** levée depuis 0,10 s, de face, attaque blocable (`Blocked` ; réduction par type : physique 85 %, feu/givre/foudre 50 %, corruption 30 % ; coût d'endurance `StaminaDamage` ou dégâts ×0,5 ; `GuardBroken` si la jauge tombe à 0) → **coup plein** (counter-hit ×1,25 en startup, recovery ou parade ratée ; poise ×0,5 sous hyper-armure). « De face » = direction vers l'**instigateur** dans un cône de `GuardHalfAngleDegrees` = 100° (demi-angle, hypothèse hors référentiel). Chaque résultat non ignoré part en `Multicast_BroadcastHitReceived`.
 
 ---
 
-## 4. Behavior Tree du dragon (Vaelthyrax)
+## 4. Behavior Trees des boss
 
-Les assets `BT_Vaelthyrax` et `BB_Vaelthyrax` **ne sont pas dans le dépôt** : ils sont à construire dans l'éditeur en suivant le schéma figé dans l'en-tête de `EMBDragonAIController.h`, repris ci-dessous. Le contrôleur n'existe que sur le serveur.
+Les assets `BT_` / `BB_` des trois boss **ne sont pas dans le dépôt** : ils sont à construire dans l'éditeur en suivant les schémas figés dans les en-têtes (`EMBDragonAIController.h`, `EMBColossusBoss.h`, `EMBSeraphBoss.h`), repris ci-dessous. **v1.3** : toute la logique de contrôle (possession, perception, Blackboard, cible, regard) est dans `AEMBBossAIController` ; `AEMBDragonAIController` n'en est qu'une classe fine qui garde le nom historique. Les trois Blackboards utilisent **les mêmes 14 clés** (§ 4.2). Le contrôleur n'existe que sur le serveur ; il ne lance pas le BT d'un boss déjà vaincu.
 
-### 4.1 Arbre
+### 4.1 Arbre du dragon (Vaelthyrax, repris de l'en-tête `EMBDragonAIController.h`)
 
 ```
 Root
@@ -1094,7 +1604,7 @@ Root
 
 Valeurs de `SelectedAttackKind` = `EEMBDragonAttackKind` : Melee 0, Breath 1, Dive 2, Area 3, Grab 4, Scripted 5. Remarque : `BTTask_EMBSelectAttack` **exclut** les attaques `bScripted` ; la valeur 5 n'atteint donc jamais la branche 5 (le Cataclysm passe uniquement par la branche 4). C'est sans danger.
 
-### 4.2 Clés du Blackboard (`AEMBDragonAIController::BBKey_*`)
+### 4.2 Clés du Blackboard (`AEMBBossAIController::BBKey_*`, communes aux trois boss)
 
 | Clé | Type | Écrite par | Lue par |
 |---|---|---|---|
@@ -1107,27 +1617,106 @@ Valeurs de `SelectedAttackKind` = `EEMBDragonAttackKind` : Melee 0, Breath 1, Di
 | `bIsTransitioning` | Bool | idem | décorateur branche 2 |
 | `bIsDead` | Bool | idem | décorateur branche 1 |
 | `bIsVulnerable` | Bool | idem | aucune branche ne l'utilise aujourd'hui |
-| `bCataclysmDue` | Bool | `SyncBlackboardState` (réévaluée par le service : dépend du temps) | décorateur branche 4 |
+| `bCataclysmDue` | Bool | `SyncBlackboardState` (`IsScriptedAttackDue` du boss ; réévaluée par le service : dépend du temps) | décorateur branche 4 du dragon ; toujours faux pour le Colosse et Nyxariel |
 | `ThreatCount` | Int | service (joueurs à < 2 500 cm) | (libre) |
 | `SelectedAttackTag` | Name | `BTTask_EMBSelectAttack` | `BTTask_EMBDragonBreath`, `BTTask_EMBDragonDiveAttack` |
 | `SelectedAttackKind` | Int | `BTTask_EMBSelectAttack` | décorateurs du sélecteur d'exécution |
 | `SelectedAttackDuration` | Float (s) | `BTTask_EMBSelectAttack` | `Wait Blackboard Time` |
 
-Les **états critiques** (étourdi, transition, mort, vulnérable, phase) ne passent pas par l'intervalle du service : le boss appelle `PushStateToBlackboard` → `AEMBDragonAIController::SyncBlackboardState` au moment où l'état change, ce qui déclenche immédiatement les « observer aborts ».
+Les **états critiques** (étourdi, transition, mort, vulnérable, phase) ne passent pas par l'intervalle du service : le boss appelle `PushStateToBlackboard` → `AEMBBossAIController::SyncBlackboardState` au moment où l'état change, ce qui déclenche immédiatement les « observer aborts ».
 
-### 4.3 Rôle de chaque nœud C++
+### 4.3 Rôle de chaque nœud C++ (trois boss)
 
 | Nœud | Type | Rôle | Points techniques |
 |---|---|---|---|
 | `BTService_EMBUpdateCombatContext` | Service (0,2 s ± 0,05) | Synchronise l'état du boss, choisit la cible (et appelle `BeginEncounter`, idempotent, dès qu'une cible existe), écrit distance, angle et `ThreatCount`. | Score = proximité (1 au contact, 0 à `MaxTargetDistance` = 8 000 cm) + menace récente (demi-vie 8 s) ; bonus d'hystérésis ×1,15 sur la cible courante. Itère au plus 4 joueurs (`CollectAlivePlayerPawns`). |
-| `BTTask_EMBSelectAttack` | Tâche instantanée (`bCreateNodeInstance`) | Tirage pondéré anti-répétition parmi les lignes de `DT_DragonAttacks`. | Score = poids de base × facteur distance × facteur angle × poids de phase × pénalité (×0,25 dernière, ×0,6 avant-dernière) ; `WingBuffet` ×3 si ≥ 2 joueurs à < 800 cm ; exclut recharges, scriptées, phases interdites. Lance directement les attaques Melee/Area/Grab (`BeginTimedAttack`, impacts par timers côté boss) et écrit leur durée. Échoue si aucune candidate. |
+| `BTTask_EMBSelectAttack` (commun, v1.3) | Tâche instantanée (`bCreateNodeInstance`) | Tirage pondéré anti-répétition parmi les lignes de la table d'attaques **du boss** (`AEMBBossBase::GetAttackRows`). | Score = poids de base × facteur distance × facteur angle × poids de phase × pénalité (×0,25 dernière, ×0,6 avant-dernière) × `GetAttackWeightModifier` (dragon : `WingBuffet` ×3 si ≥ 2 joueurs à < 800 cm) ; exclut recharges, scriptées, phases interdites et attaques refusées par `IsAttackAllowed` (Résonance sans obélisque ; Nyxariel au sol en phases 1-2 ; Ombres jumelles avec clones vivants). Échoue aussi si le boss **tombe** (`IsFalling`). Lance directement les attaques à impacts programmés (`BeginTimedAttack`) et écrit leur durée. |
 | `BTTask_EMBDragonBreath` | Tâche latente (`bNotifyTick`) | Souffles : `Cone` (20°, 2,5 s, visée figée en fin de télégraphe), `Sweep` (arc 120° en 2,0 s), `Aerial` (vol rasant, zones de feu 8 s à 20/s), `Cataclysm` (4 s de charge en vol, 900 dégâts avec ligne de vue). | 8 ticks de dégâts par seconde (`StaminaDamage` 10 par tick sur garde) ; télégraphe ×0,9 en phase 3 (sauf charge du Cataclysm) ; brûlure si `bAppliesBurn` ; souffle aérien : zones de feu serveur (`AddFireZone`) et **un** `Multicast_SpawnFireZoneVFX` (Unreliable) par traînée pour leur visuel ; nettoyage idempotent sur fin normale comme sur abandon ; appelle `NotifyCataclysmFired`. |
 | `BTTask_EMBDragonDiveAttack` | Tâche latente (`bNotifyTick`) | Piqué en 4 étapes : Takeoff 2,0 s → Mark 1,5 s (ombre sur la position prédite, flash 0,35 s) → Dive 4 500 cm/s → impact rayon 600 → Vulnerable 2,5 s. | Lancement calé pour que l'impact tombe à la fin exacte de la marque ; `BeginVulnerableWindow` ; nettoyage idempotent (retour au sol). |
-| `BTDecorator_EMBDragonPhase` | Décorateur Blackboard (clé `CurrentPhase`) | Vrai si `MinPhase ≤ phase ≤ MaxPhase`. | Observe la clé : ré-évaluation immédiate au changement de phase avec « Observer Aborts ». |
+| `BTDecorator_EMBDragonPhase` (commun malgré son nom) | Décorateur Blackboard (clé `CurrentPhase`) | Vrai si `MinPhase ≤ phase ≤ MaxPhase`. | Observe la clé : ré-évaluation immédiate au changement de phase avec « Observer Aborts ». Utilisé par le dragon (Cataclysm) et par Nyxariel (repli en vol ou au sol). |
+| `BTTask_EMBColossusCharge` (v1.3) | Tâche latente (`bNotifyTick`) | Charge de bélier : télégraphe 1,4 s (×0,9 en P2), direction figée à l'ouverture de l'esquive latérale (1,30 s), puis course à 2 000 cm/s (\*) jusqu'à `MaxRange` + 500 cm (\*) ou un obstacle. | `StepGroundCharge` (balayage contre le décor seul : les joueurs ne bloquent pas) ; chaque joueur traversé est touché une fois ; obélisque ou mur percuté → `ResolveChargeImpact` (dégâts à l'obstacle, étourdi 3 s). Nettoyage idempotent. |
+| `BTTask_EMBSeraphDash` (v1.3) | Tâche latente (`bNotifyTick`) | Estoc (télégraphe 0,5 s) et Feinte (1,0 s + délai aléatoire 0,3-0,9 s) ; 0,15 s avant le dash : visée figée et `Multicast_TipFlash` (signal d'esquive) ; dash 1 800 cm en 0,25 s. | En vol : trajectoire 3D à pente bornée ; au sol (P3) : `StepGroundCharge`. Contact testé sur le **segment** parcouru (`ResolveDashContact`) ; un coup paré arrête le dash ; événement relayé aux clones. |
+| `BTTask_EMBSeraphPlunge` (v1.3) | Tâche latente (`bNotifyTick`, étapes de trajet) | Piqué en spirale (ombre 1,2 s sur la position **prédite**, flash 0,35 s, impact rayon 400) ; Chute de l'étoile morte (3 bonds, ombre 0,8 s, impacts espacés de 0,9 s, puis vulnérable 4 s). | Position fonction du **temps** : l'impact tombe à l'instant annoncé quelle que soit la distance. En P3, vol activé seulement pendant l'attaque, retour au sol garanti en fin ou en abandon. |
+| `BTTask_EMBSeraphReposition` (v1.3) | Tâche latente (`bNotifyTick`, durée aléatoire) | Phases 1-2 : décollage si besoin, orbite à ~1 100 cm (\*) et 200 cm (\*) au-dessus de la cible ; phase 3 : simple attente. | Utilisée en récupération (0,4-0,7 s) et en repli (0,5-0,9 s) ; vol par `StepFlightToward`. |
+
+### 4.4 Colosse d'Ossivaire (repris de l'en-tête `EMBColossusBoss.h`)
+
+```
+Root
+└─ Selector "Racine"                       [Service : BTService_EMBUpdateCombatContext (0,2 s ± 0,05)]
+   ├─ 1. Sequence "Mort"                   [Deco BB bIsDead == true, aborts Both]          -> Wait long
+   ├─ 2. Sequence "Transition de phase"    [Deco BB bIsTransitioning == true, aborts Both] -> Wait 0,25 s
+   ├─ 3. Sequence "Étourdi"                [Deco BB bIsStunned == true, aborts Both]       -> Wait 0,25 s
+   │      (posture brisée 4 s, ou 3 s après une charge qui percute un obélisque / un mur)
+   ├─ 4. Sequence "Combat"                 [Deco BB TargetActor is Set, aborts Self]
+   │     ├─ BTTask_EMBSelectAttack         (échoue si rien de valide, ou si le Colosse tombe)
+   │     ├─ Selector "Exécution par type"  (un décorateur BB par enfant, sur la clé entière SelectedAttackKind)
+   │     │    ├─ [SelectedAttackKind == 6 (Charge)]  BTTask_EMBColossusCharge
+   │     │    └─ [SelectedAttackKind == 0 (Melee), 3 (Area), 7 (Channel) ou 8 (Rings)]
+   │     │         Wait Blackboard Time (clé SelectedAttackDuration)  (impacts programmés par le boss)
+   │     │         (dupliquer le noeud avec un décorateur par valeur, ou un décorateur composite "Or")
+   │     └─ Wait 0,4 à 0,8 s (aléatoire)   (récupération : fenêtre de punition pour le joueur)
+   └─ 5. Sequence "Repositionnement" (repli) : MoveTo(TargetActor, rayon 500) puis Wait 0,3 s
+```
+
+- Rugissement du lion → Poing-marteau : enchaînement géré par le boss (`GetChainedAttackTag`) ; la durée écrite dans `SelectedAttackDuration` couvre les deux attaques.
+- Résonance : canalisation de 3 s interrompue par 150 de posture reçue ; exclue de la sélection sans obélisque intact.
+- Ondes runiques : anneaux émis par des timers du boss, qui se propagent seuls (aucune tâche BT dédiée).
+- Aucun décorateur de phase : la table d'attaques filtre les phases (`AllowedPhases`).
+
+### 4.5 Nyxariel, l'Aile Flétrie (repris de l'en-tête `EMBSeraphBoss.h`)
+
+```
+Root
+└─ Selector "Racine"                       [Service : BTService_EMBUpdateCombatContext (0,2 s ± 0,05)]
+   ├─ 1. Sequence "Mort"                   [Deco BB bIsDead == true, aborts Both]          -> Wait long
+   ├─ 2. Sequence "Transition de phase"    [Deco BB bIsTransitioning == true, aborts Both] -> Wait 0,25 s
+   │      (rugissement 3 s, invulnérable ; la base pose Nyxariel au sol pendant la transition)
+   ├─ 3. Sequence "Étourdi"                [Deco BB bIsStunned == true, aborts Both]       -> Wait 0,25 s
+   │      (posture brisée 3 s, ou cloche 2 s ; BeginStun() le fait tomber au sol)
+   ├─ 4. Sequence "Combat"                 [Deco BB TargetActor is Set, aborts Self]
+   │     ├─ BTTask_EMBSelectAttack         (échoue si rien de valide : en phases 1-2 aucune attaque n'est permise
+   │     │                                  tant que Nyxariel n'est pas en vol, voir IsAttackAllowed)
+   │     ├─ Selector "Exécution par type"  (un décorateur BB par enfant, sur la clé entière SelectedAttackKind)
+   │     │    ├─ [SelectedAttackKind == 9 (Dash)]    BTTask_EMBSeraphDash      (Estoc fulgurant, Feinte)
+   │     │    ├─ [SelectedAttackKind == 10 (Plunge)] BTTask_EMBSeraphPlunge    (Piqué en spirale, Chute de l'étoile morte)
+   │     │    └─ [SelectedAttackKind == 0 (Melee) ou 3 (Area)]
+   │     │         Wait Blackboard Time (clé SelectedAttackDuration)  (impacts programmés par le boss :
+   │     │         Ciseaux d'ailes, Pluie de plumes, Lance jetée, Halo noir, Ombres jumelles)
+   │     └─ BTTask_EMBSeraphReposition     (récupération 0,4 à 0,7 s : vol orbital en phases 1-2 ; simple attente en
+   │                                        phase 3 où Nyxariel est au sol). C'est la fenêtre de punition du joueur.
+   └─ 5. Selector "Repositionnement" (repli quand aucune attaque n'est valide)
+         ├─ [BTDecorator_EMBDragonPhase Min 1 / Max 2, aborts Self]
+         │     BTTask_EMBSeraphReposition (0,5 à 0,9 s) : décollage si besoin, puis orbite à ~1 100 cm de la cible
+         └─ [BTDecorator_EMBDragonPhase Min 3 / Max 3, aborts Self]
+               Sequence : MoveTo(TargetActor, rayon 700) puis Wait 0,2 s   (phase 3 : au sol, vitesse x1,2)
+```
+
+- Feinte : levée 1,0 s, délai aléatoire 0,3-0,9 s (`FRandomStream` serveur du boss), éclat de la pointe 0,15 s avant le dash : c'est le signal d'esquive.
+- Ombres jumelles : les clones (`AEMBSeraphShadow`) rejouent chaque événement dommageable du boss 0,3 s plus tard, à 30 % des dégâts (`BroadcastShadowEcho`) ; l'invocation est un impact programmé, sans tâche dédiée.
+- Phase 3 (25 % des PV) : au sol définitivement ; la Chute de l'étoile morte reste possible (bonds scriptés, vol limité à la durée de l'attaque).
+
+### 4.6 Valeurs de `SelectedAttackKind` (`EEMBDragonAttackKind`)
+
+| Valeur | Nom | Boss | Exécution |
+|---|---|---|---|
+| 0 | Melee | tous | `Wait Blackboard Time` (impacts programmés) |
+| 1 | Breath | dragon | `BTTask_EMBDragonBreath` |
+| 2 | Dive | dragon | `BTTask_EMBDragonDiveAttack` |
+| 3 | Area | tous | `Wait Blackboard Time` |
+| 4 | Grab | dragon | `Wait Blackboard Time` |
+| 5 | Scripted | dragon | branche Cataclysm (jamais choisie par la sélection) |
+| 6 | Charge | Colosse | `BTTask_EMBColossusCharge` |
+| 7 | Channel | Colosse | `Wait Blackboard Time` (Résonance) |
+| 8 | Rings | Colosse | `Wait Blackboard Time` (Ondes runiques) |
+| 9 | Dash | Nyxariel | `BTTask_EMBSeraphDash` |
+| 10 | Plunge | Nyxariel | `BTTask_EMBSeraphPlunge` |
+
+Les valeurs 6 à 10 sont ajoutées **en fin** d'énumération (v1.3) : les colonnes `Kind` déjà importées du dragon ne changent pas.
 
 ---
 
-## 5. Progression (codée — v1.2)
+## 5. Progression (codée — v1.2 ; passifs de survie branchés en v1.3)
 
 Fichiers : `EMBProgressionTypes.h` (énumérations, `FEMBPassiveModifiers`, `FEMBSkillRank`, `FEMBProgressionSaveData`, lignes `FEMBGlyphRow` et `FEMBSkillNodeRow`), `EMBProgressionSettings.h/.cpp`, `EMBProgressionComponent.h/.cpp`, `EMBProgressionSubsystem.h/.cpp`, `EMBPlayerState.h/.cpp`, `EMBDiscoveryVolume.h/.cpp`. Référentiel : § 7 (v1.2).
 
@@ -1171,11 +1760,13 @@ Fichiers : `EMBProgressionTypes.h` (énumérations, `FEMBPassiveModifiers`, `FEM
 | `ParryWindowFrames` | fenêtre de parade parfaite + somme × 1 frame |
 | `BuildCost` | `UEMBBuildingComponent::SetBuildCostMultiplier(max(0, 1 + somme))`, borné à [0,1 ; 1], coût arrondi au supérieur, minimum 1 (`GetEffectiveCost`, identique aperçu / serveur) |
 | `CarryWeight` | `UEMBInventoryComponent::SetCarryWeightBonus` (charge maximale = 300 + bonus) |
-| `HungerThirstRate`, `HarvestYield`, `ComfortRange`, `CorruptionGain`, `FireResistance` | **stockés, non appliqués** (jauges de survie, récolte, confort, corruption et résistances non codées) |
+| `HungerThirstRate`, `ComfortRange`, `CorruptionGain` | **v1.3** : poussés par `ApplyModifiersToPawn` vers `UEMBSurvivalComponent::SetPassiveModifiers` (baisse de faim et soif, élargissement de la plage de confort, gain de Corruption) |
+| `FireResistance` | **v1.3** : appliqué par le **combat** (`GetFireResistance` = passif + bonus de l'huile, plafond 0,9 ; dégâts de feu × (1 − résistance)) ; la survie ne le relaie pas, elle ne gère que le bonus temporaire de l'huile |
+| `HarvestYield` | **stocké, non appliqué** (récolte non codée ; transmis à la survie mais lu par aucun système) |
 | `None` (compétences actives) | accordent leur `GrantedTag` ; **aucune exécution codée** |
 
 - **Verrou de construction** : `UEMBBuildingComponent::IsPieceUnlocked` lit `RequiredGlyph` de la ligne `DT_BuildPieces` puis `HasGlyph` sur le PlayerState du pawn ; colonne vide = toujours disponible. Sans PlayerState `AEMBPlayerState` (GameMode non configuré), avertissement et **autorisation** (le jeu reste testable).
-- **Participants d'un boss** (`NotifyWorldEvent`) : chaque PlayerState du GameState dont le pawn existe (vivant ou mort) à moins de `ParticipantRadius` (10 000 cm) de la source ; source nulle = tous les joueurs. L'XP n'est versée qu'à la première obtention du déclencheur par ce joueur ; un événement monde déjà enregistré n'est jamais redistribué.
+- **Participants d'un boss** (`NotifyWorldEvent`, appelé par `AEMBBossBase` pour les trois boss) : chaque PlayerState du GameState dont le pawn existe (vivant ou mort en attente de réapparition) à moins de `ParticipantRadius` (10 000 cm) de la source ; source nulle = tous les joueurs. L'XP n'est versée qu'à la première obtention du déclencheur par ce joueur ; un événement monde déjà enregistré n'est jamais redistribué.
 
 ### 5.4 Barèmes (référentiel § 7.2, valeurs de `DefaultGame.ini`)
 
@@ -1189,13 +1780,13 @@ Fichiers : `EMBProgressionTypes.h` (énumérations, `FEMBPassiveModifiers`, `FEM
 | Rayon des participants | 10 000 cm |
 | `SecretGlyphMode` | `RevealOnly` (**à valider**) |
 
-Ordre de grandeur, calculé à partir de la formule (à vérifier par l'équilibrage) : l'XP cumulée pour atteindre le niveau 80 est de l'ordre de 3,4 millions, alors que les seules sources codées sont le dragon (60 000, une fois) et les volumes de découverte (XP réglée par volume). Voir section 9, P4.
+Ordre de grandeur, calculé à partir de la formule (à vérifier par l'équilibrage) : l'XP cumulée pour atteindre le niveau 80 est de l'ordre de 3,4 millions, alors que les seules sources codées sont les trois boss (6 000 + 15 000 + 60 000 = 81 000, une fois chacun) et les volumes de découverte (XP réglée par volume). Voir section 9, P4.
 
 ---
 
-## 6. Sauvegarde (codée — v1.2)
+## 6. Sauvegarde (codée — format 2 depuis la v1.3)
 
-Fichiers : `EMBSaveTypes.h`, `EMBSaveGame.h/.cpp`, `EMBSaveSubsystem.h/.cpp`, `EMBGameMode.h/.cpp` ; ajouts dans `EMBStructureSubsystem`, `EMBBuildablePiece`, `EMBInventoryComponent`, `EMBStatsComponent`, `EMBDragonBoss`. Référentiel : § 8 (v1.2).
+Fichiers : `EMBSaveTypes.h`, `EMBSaveGame.h/.cpp`, `EMBSaveSubsystem.h/.cpp`, `EMBGameMode.h/.cpp` ; ajouts dans `EMBStructureSubsystem`, `EMBBuildablePiece`, `EMBInventoryComponent`, `EMBStatsComponent`, `EMBBossBase` ; **v1.3** : `FEMBSurvivalSaveData` (`EMBSurvivalTypes.h`), `UEMBRespawnSubsystem` (liaisons et sacs). Référentiel : § 8 (format 2) et § 9.
 
 ### 6.1 Principe
 
@@ -1203,7 +1794,7 @@ Fichiers : `EMBSaveTypes.h`, `EMBSaveGame.h/.cpp`, `EMBSaveSubsystem.h/.cpp`, `E
 - **Fichiers** : 3 mondes (`?Slot=0..2` dans l'URL de la carte, 0 par défaut) × 2 fichiers `EMB_World_<n>_A` et `EMB_World_<n>_B`, écrits **en alternance**. Une écriture interrompue ne peut abîmer que le fichier en cours.
 - **Écriture** : instantané complet construit sur le thread de jeu (`BuildSnapshot` : joueurs connectés capturés, pièces, événements monde, champs de contrôle), puis `UGameplayStatics::AsyncSaveGameToSlot`. Une seule écriture en vol ; les demandes reçues pendant ce temps fusionnent en une seule, relancée à la fin (`bSavePending`). À l'arrêt (`EndPlay` du GameMode, `Quit` ou fin de PIE) : `SaveNowBlocking` (`SaveGameToSlot` synchrone), ignorée si une écriture asynchrone est déjà en vol.
 - **Déclencheurs** : minuterie de 300 s (`AutosaveIntervalSeconds`, minimum 10 s), événement monde enregistré (boss vaincu), déconnexion d'un joueur (`Logout` → `CapturePlayer`), arrêt du serveur.
-- **Report pendant un boss** : sans `bForce`, `RequestSave` est reportée tant qu'un `AEMBDragonBoss::IsEncounterActive()` est vrai (rencontre engagée, boss vivant, au moins un joueur **vivant** à moins de 10 000 cm). La minuterie du point sûr (10 s) relance la sauvegarde reportée dès que la rencontre n'est plus active. Après un wipe, la rencontre n'est plus « active » : la sauvegarde repart.
+- **Report pendant un boss** : sans `bForce`, `RequestSave` est reportée tant qu'**un** `AEMBBossBase::IsEncounterActive()` est vrai (rencontre engagée, boss vivant, au moins un joueur **vivant** à moins de l'`ArenaRadius` du boss : dragon 6 000, Colosse 3 000, Nyxariel 4 000 cm). La minuterie du point sûr (10 s) relance la sauvegarde reportée dès que la rencontre n'est plus active. Après un wipe, la rencontre n'est plus « active » : la sauvegarde repart. **v1.3** : le report est **plafonné à 300 s** (`DeferredSinceTime`) ; au-delà, l'écriture est forcée (l'état du combat n'étant pas sauvegardé, rien d'incohérent n'est écrit).
 - **Garde-fous** : aucune écriture avant la fin du chargement ; aucune écriture si un fichier de version inconnue existe ou si des constructions sauvegardées ne peuvent pas être validées (`IsWriteBlocked`) ; un joueur dont l'identité n'a pas été réclamée ou est en double n'est jamais capturé.
 - **Dernier point sûr** (toutes les 10 s, hors rencontre de boss) : pawn vivant, au sol, en état de combat `Idle`.
 
@@ -1211,21 +1802,21 @@ Fichiers : `EMBSaveTypes.h`, `EMBSaveGame.h/.cpp`, `EMBSaveSubsystem.h/.cpp`, `E
 
 | Bloc | Champs | Source |
 |---|---|---|
-| En-tête | `SaveFormatVersion` (1), `SaveTimestamp` (UTC, départage A/B), `SlotIndex` | `BuildSnapshot` |
-| Monde (`FEMBWorldSaveData`) | `WorldEvents` : événements monde acquis (`Event.Boss.Killed.*`) | `UEMBProgressionSubsystem::GetWorldEvents` |
-| Joueurs (`FEMBPlayerSaveData`, clé `StableId`) | `Progression` (`FEMBProgressionSaveData`), `bHasPawnState`, `Resources`, `Health`, `Stamina`, `bHasPawnTransform`, `PawnTransform`, `bHasLastSafeTransform`, `LastSafeTransform` | `ExportSaveData`, `ExportResources`, jauges et transform du pawn ; **toutes** les entrées connues sont conservées, y compris celles des joueurs absents |
+| En-tête | `SaveFormatVersion` (**2**), `SaveTimestamp` (UTC, départage A/B), `SlotIndex` | `BuildSnapshot` |
+| Monde (`FEMBWorldSaveData`) | `WorldEvents` : événements monde acquis (`Event.Boss.Killed.*`) ; **v2** : `DeathBags` (`FEMBDeathBagSaveData` : `OwnerStableId`, `Transform`, `Contents`) | `UEMBProgressionSubsystem::GetWorldEvents` ; `UEMBRespawnSubsystem::GetPersistentBags` (sacs des joueurs persistés seulement) |
+| Joueurs (`FEMBPlayerSaveData`, clé `StableId`) | `Progression` (`FEMBProgressionSaveData`), `bHasPawnState`, `Resources`, `Health`, `Stamina`, `bHasPawnTransform`, `PawnTransform`, `bHasLastSafeTransform`, `LastSafeTransform` ; **v2** : `Survival` (`FEMBSurvivalSaveData` : faim, soif, Corruption, température ressentie, huile et intoxication restantes), `bHasSurvivalState`, `BoundRespawnPieceSaveId` | `ExportSaveData`, `ExportResources`, jauges, survie et transform du pawn ; liaison convertie en `SaveId` de pièce **du même fichier** (les `SaveId` sont renumérotés à chaque écriture) ; **toutes** les entrées connues sont conservées, y compris celles des joueurs absents |
 | Constructions (`FEMBPieceSaveData`) | `SaveId` (1..N), `RowName`, `PieceClassPath` (informatif), `Transform`, `Health`, `Material`, `Category`, `bAnchoredToGround`, `PlacerStableId`, `SupportLinkIds` | pièces posées par des joueurs et non effondrées (`WasPlacedByPlayer`) ; les pièces placées dans le niveau reviennent avec le niveau |
 | Contrôle de fin (**derniers champs déclarés**) | `ExpectedPlayerCount`, `ExpectedPieceCount`, `bComplete` | `FinalizeForWrite` |
 
-**Joueur mort au moment de la capture** (`DeathSaveBehavior`, **à valider**) : PV et endurance enregistrés pleins ; avec `RespawnAtSafePoint` (défaut), position = dernier point sûr, ou PlayerStart s'il n'est pas connu ; avec `KeepPosition`, position telle quelle. Aucune pénalité de mort.
+**Joueur mort au moment de la capture** (en attente de réapparition ; `DeathSaveBehavior`, **à valider**) : enregistré **vivant** — PV et endurance aux maxima **de base** (pas les maxima réduits par la survie), survie aux valeurs de réapparition (faim 60, soif 60, Corruption 0, température neutre, aucun effet temporaire) ; avec `RespawnAtSafePoint` (défaut), position = point lié valide, sinon dernier point sûr, sinon aucune (PlayerStart) ; avec `KeepPosition`, position telle quelle. **Aucun sac n'est créé par la sauvegarde** et l'inventaire est enregistré tel quel : le sac n'existe qu'à une réapparition réelle (voir 9.5, V5).
 
-**Non sauvegardé, recalculé** : intégrité des pièces (recalcul global au chargement), `GrantedTags` et passifs (dérivés), état de combat, état d'un combat de boss en cours (seule la défaite du boss est persistée), identifiant de base, `PlacerPlayerId` de session (remis à `INDEX_NONE`).
+**Non sauvegardé, recalculé** : intégrité des pièces (recalcul global au chargement), `GrantedTags` et passifs (dérivés), état de combat, attente de réapparition, état d'un combat de boss en cours (seule la défaite du boss est persistée : phase, PV et échelle repartent à neuf au rechargement), identifiant de base, `PlacerPlayerId` de session (remis à `INDEX_NONE`), liaisons à des points de réapparition **placés dans le niveau** (seules les pièces posées par un joueur ont un `SaveId`), sacs et liaisons des joueurs non persistés (`Session_<PlayerId>`), heure et météo de l'environnement.
 
 ### 6.3 Chargement et validation
 
 Séquence complète au § 2.10. Règles appliquées à chaque fichier lu :
 1. **Bon monde** (`SlotIndex` = monde actif), sinon ignoré.
-2. **Version** (`MigrateToCurrent`) : supérieure au binaire, ou inférieure à 1, ou migration impossible → fichier ignoré **et écritures bloquées** (on ne détruit jamais ce que l'on ne sait pas lire).
+2. **Version** (`MigrateToCurrent`, **v1.3** : résultat `EEMBMigrationResult`) : `Ok` (format 2, ou format 1 migré : champs v2 à leur défaut, `bHasSurvivalState` faux donc survie de départ) ; `TooRecent` (supérieure au binaire) → fichier ignoré **et écritures bloquées** (on ne détruit jamais ce que l'on ne sait pas lire) ; `Invalid` (inférieure à 1 ou migration impossible) → fichier ignoré **sans** bloquer les écritures (changement v1.3 : auparavant ce cas bloquait aussi).
 3. **Complétude** (`IsComplete` : `bComplete` vrai et décomptes égaux au contenu relu) → sinon ignoré, l'autre fichier prend le relais.
 4. Le plus récent valide l'emporte (`IsNewerThan` : horodatage, puis version) ; la prochaine écriture vise l'autre fichier.
 
@@ -1235,11 +1826,16 @@ Séquence complète au § 2.10. Règles appliquées à chaque fichier lu :
 
 **Joueurs** : `RestorePlayer` (à `PostLogin`) réclame l'identité ; si le chargement n'est pas terminé, la demande attend `FinishLoading`. La progression est importée tout de suite (PlayerState) ; le pawn (inventaire, PV, endurance, position par `TeleportTo` avec repli) est restauré dès qu'il existe, avec nouvelles tentatives toutes les 0,25 s pendant 20 s (`PawnRestoreTimeoutSeconds`).
 
-**Dragon déjà vaincu** : `RestoreWorldEvents` puis `ApplyDefeatedFromSave` sur chaque `AEMBDragonBoss` (le `BeginPlay` du dragon fait le même contrôle, utile si les événements sont déjà restaurés) : dragon caché, sans collision ni IA, `bIsDead` répliqué, ni XP ni `OnBossDefeated`, arène en état final calme. Le dragon n'est **pas détruit** (références de l'arène et des Blueprints conservées).
+**Boss déjà vaincus** : `RestoreWorldEvents` puis `ApplyDefeatedFromSave` sur chaque `AEMBBossBase` dont le tag de défaite est enregistré (le `BeginPlay` de chaque boss fait le même contrôle, utile si les événements sont déjà restaurés) : boss caché, sans collision ni IA, `bIsDead` répliqué, ni XP ni `OnBossDefeated`, arène en état final calme (lave et foudre arrêtées, obélisques éteints, cloches silencieuses). Le boss n'est **pas détruit** (références des arènes et des Blueprints conservées).
+
+**Réapparition et sacs (v2)** : les liaisons sont rétablies pendant la création des pièces (`RestoreBinding` d'après `BoundRespawnPieceSaveId`) ; les sacs sont recréés après les pièces (`RestoreBag`, contenu assaini par `UEMBInventoryComponent::SanitizeResourceList`). Un sac recréé n'a pas de `PlayerId` tant que son propriétaire n'est pas connecté (`NotifyPlayerPresent` le lui attribue).
+
+**Survie (v2)** : importée par `TryRestorePawn` seulement si `bHasSurvivalState` (un fichier v1 migré garde les valeurs de départ) ; import borné (valeurs non finies remplacées, jauges dans [0, 100], Corruption ≤ 99 pour ne pas tuer au chargement).
 
 ### 6.4 Format et versionnage
 
-- `UEMBSaveGame::CurrentFormatVersion = 1`. Évolution : incrémenter la constante, ajouter un cas `MigrateStep(N)` (N → N+1), **ne jamais renommer ni réutiliser une propriété** (la sérialisation étiquetée d'Unreal tolère l'ajout de champs, qui prennent leur valeur par défaut).
+- `UEMBSaveGame::CurrentFormatVersion = 2` (1 = format v1.2 ; 2 = survie par joueur, liaison de réapparition, sacs ; migration 1 → 2 par ajout de champs à leur défaut). Évolution : incrémenter la constante, ajouter un cas `MigrateStep(N)` (N → N+1), **ne jamais renommer ni réutiliser une propriété** (la sérialisation étiquetée d'Unreal tolère l'ajout de champs, qui prennent leur valeur par défaut).
+- **Piège de sérialisation** (référentiel § 8, v1.3) : une valeur égale au défaut de la propriété n'est pas écrite. Les champs sauvegardés ont donc des défauts **neutres** et non des constantes d'équilibrage (ex. `FEMBProgressionSaveData::Level` vaut 0 par défaut ; l'import ramène le niveau à ≥ 1 et le recalcule depuis l'XP). Conséquence : une `FEMBSurvivalSaveData` neuve vaut « faim 0, soif 0 », d'où le drapeau `bHasSurvivalState`.
 - Les références aux données sont des **noms de ligne** (`FName`) ; une ligne supprimée est ignorée au chargement. Les énumérations (`EEMBBuildMaterial`, `EEMBPieceCategory`) sont écrites dans le fichier mais **relues dans la table** au chargement ; ne jamais réordonner leurs entrées par prudence.
 - La détection d'un fichier tronqué repose sur l'hypothèse que les propriétés sont écrites dans l'ordre de déclaration et qu'une lecture tronquée laisse `bComplete` à faux ; le comportement réel du moteur face à un fichier coupé (objet partiel ou `nullptr`) est **à vérifier par un test** (fichier volontairement tronqué). Dans les deux cas le fichier est écarté.
 - Le choix A/B repose sur l'horloge UTC de la machine hôte : un recul d'horloge peut faire préférer l'ancien fichier (risque faible, non traité).
@@ -1283,15 +1879,32 @@ L'identifiant est calculé une fois par connexion (`ControllerIds`) puis réutil
 | Pièce : mouvement | Non | `SetReplicateMovement(false)` | — | `NetCullDistance` 15 000 cm, `NetUpdateFrequency` 2 |
 | Pièce : effets d'effondrement | Multicast Unreliable | — | Serveur | débris lourds jamais sur serveur dédié |
 | Graphe de structure | Non | — | Serveur (intégrité) | chaque machine construit son graphe local pour la prédiction d'aperçu |
-| Dragon : `CurrentPhase`, `bIsTransitioning`, `bIsStunned`, `bIsDead` | Oui (RepNotify) | aucune | Serveur | `bAlwaysRelevant`, `NetUpdateFrequency` 30 |
-| Dragon : `bIsFlying`, `bIsVulnerable` | Oui | aucune | Serveur | — |
-| Dragon : PV, posture | via son `UEMBStatsComponent` | voir lignes Stats | Serveur | — |
-| Dragon : `StateTags` | Non | — | reconstruits localement depuis les propriétés répliquées | — |
-| Dragon : menace, recharges, historique, brûlures, zones de feu | Non | — | Serveur | zones de feu : visuel par `Multicast_SpawnFireZoneVFX` |
-| Dragon : montages, souffle (début/fin), arrêt des montages | Multicast **Reliable** (4 RPC : `Multicast_PlayMontage`, `Multicast_StopMontages`, `Multicast_StartBreathVFX`, `Multicast_StopBreathVFX`) | — | Serveur | état visible durable : une perte laisserait un souffle affiché |
-| Dragon : VFX ponctuels, VFX des zones de feu, télégraphes, marqueurs au sol (y compris foudre) | Multicast **Unreliable** (4 RPC : `Multicast_SpawnVFXAtLocation`, `Multicast_SpawnFireZoneVFX`, `Multicast_Telegraph`, `Multicast_ShowGroundMarker`) | — | Serveur | ignorés sur serveur dédié ; perte tolérée (voir limites) |
+| Boss (`AEMBBossBase`, trois boss) : `CurrentPhase`, `bIsTransitioning`, `bIsStunned`, `bIsDead` | Oui (RepNotify) | aucune | Serveur | `bAlwaysRelevant`, `NetUpdateFrequency` 30 |
+| Boss : `bIsFlying`, `bIsVulnerable` | Oui | aucune | Serveur | — |
+| Boss : PV, posture | via son `UEMBStatsComponent` | voir lignes Stats | Serveur | — |
+| Boss : `StateTags` | Non | — | reconstruits localement depuis les propriétés répliquées | — |
+| Boss : menace, recharges, historique, brûlures, zones de feu, anneaux runiques, canalisation, échelle coop, minuterie de wipe | Non | — | Serveur | zones de feu : visuel par `Multicast_SpawnFireZoneVFX` ; anneaux : `Multicast_RuneRing` |
+| Boss : montages, souffle (début/fin), arrêt des montages, **VFX des zones de feu** | Multicast **Reliable** (5 RPC : `Multicast_PlayMontage`, `Multicast_StopMontages`, `Multicast_StartBreathVFX`, `Multicast_StopBreathVFX`, `Multicast_SpawnFireZoneVFX`) | — | Serveur | état visible durable ou zone dangereuse : une perte laisserait un souffle affiché ou une zone invisible. **v1.3** : `Multicast_SpawnFireZoneVFX` est passé en Reliable (envoyé à la pose de chaque zone, fréquence faible) |
+| Boss : VFX ponctuels, télégraphes, marqueurs au sol (y compris foudre, ombres des plongeons) | Multicast **Unreliable** (3 RPC : `Multicast_SpawnVFXAtLocation`, `Multicast_Telegraph`, `Multicast_ShowGroundMarker`) | — | Serveur | ignorés sur serveur dédié ; perte tolérée (voir limites) |
+| Colosse : anneau runique, fin de Résonance — **v1.3** | Multicast **Reliable** (`Multicast_RuneRing`, `Multicast_ResonanceFinished`) | — | Serveur | mécanique à lire (3 envois par Ondes runiques, 1 par Résonance) ; le Blueprint anime l'anneau localement |
+| Nyxariel : éclat de la pointe — **v1.3** | Multicast **Reliable** (`Multicast_TipFlash`) | — | Serveur | **signal d'esquive** de la Feinte : ne doit pas se perdre |
+| Obélisque : `Health`, `bLit` — **v1.3** | Oui (RepNotify) | aucune | Serveur | `NetUpdateFrequency` 5 ; RepNotify → événements Blueprint |
+| Cloche : `bUsed`, `bSilenced` — **v1.3** ; sonnerie | Oui (RepNotify) ; `Multicast_Ring` **Unreliable** | aucune | Serveur | `NetUpdateFrequency` 5 |
+| Clone de Nyxariel (`AEMBSeraphShadow`) : `bDissipated` — **v1.3** | Oui (RepNotify) ; rejeu et dash cosmétiques par `Multicast_PlayEcho` / `Multicast_StartDash` **Unreliable** | aucune | Serveur (dégâts, dissipation) | mouvement **non** répliqué : le dash est un aller-retour cosmétique qui revient toujours à la position d'origine |
+| Projectile (`AEMBProjectile`) : `NetState` (`FEMBProjectileNetState` : actif, renvoyé, séquence, style, origine, vitesse, heure serveur) — **v1.3** | Oui (RepNotify) | aucune (`NetUpdateFrequency` 10) | Serveur (dégâts jamais résolus sur les clients) | mouvement **non** répliqué : chaque client déroule la ligne droite depuis l'origine et la vitesse, avec rattrapage de latence par l'heure serveur ; `Sequence` force le RepNotify d'un projectile recyclé |
 | Contrôleur IA, Blackboard, BT | Non (serveur seul) | — | Serveur | — |
-| Arène : décor par phase, lave, tempête de cendres | Non (acteur non répliqué) | — | Déduit de `CurrentPhase` sur chaque machine ; dégâts de lave et foudre par timers **serveur** | rattrapage des phases manquées à la liaison ; marqueurs de foudre diffusés par le boss |
+| Arènes (dragon, Colosse, Nyxariel) : décor par phase, lave, tempête de cendres, allumage, état final calme | Non (acteurs non répliqués) | — | Déduit de `CurrentPhase` / `bIsDead` sur chaque machine ; dégâts de lave et foudre, décision d'étourdir par cloche : **serveur** | rattrapage des phases manquées à la liaison |
+| Personnage : `bDeadAwaitingRespawn` (RepNotify), `DeathServerTime` — **v1.3** | Oui | aucune (tous : invite de réanimation, UI de groupe) | Serveur | temps restant estimé côté client par `GetServerWorldTimeSeconds` |
+| Personnage : cible d'interaction, maintien côté client | Non | — | Client local (estimation d'interface) | le serveur chronomètre le maintien et décide seul de la fin |
+| Combat : `bSpawnProtected` — **v1.3** | Oui | aucune | Serveur | protection de 3 s visible des autres (effets) |
+| Stats : `HealthMaxMultiplier`, `StaminaMaxMultiplier` — **v1.3** | Oui (RepNotify `OnRep_MaxMultipliers`) | vie : aucune (barres de vie des autres) ; endurance : `COND_OwnerOnly` | Serveur | maxima effectifs = base × multiplicateur de survie ; le multiplicateur de régénération reste serveur |
+| Survie : `Hunger`, `Thirst`, `FeltTemperature`, `Corruption`, `bIntoxicated`, `bFireOilActive` — **v1.3** | Oui (RepNotify `OnRep_Gauges`) | `COND_OwnerOnly` | Serveur (timer 1 Hz) | données de HUD |
+| Survie : `PublicCorruptionTier` (0, 1 ≥ 50, 2 ≥ 75) — **v1.3** | Oui | `COND_SkipOwner` | Serveur | palier plutôt que valeur exacte : au plus deux changements par traversée de seuil |
+| Survie : passifs, isolation, durées d'huile et d'intoxication, effets appliqués | Non | — | Serveur | — |
+| Environnement (`UEMBEnvironmentSubsystem`) : heure, météo, volumes, sources | **Non** (local à chaque machine) | — | Serveur pour la survie | les volumes posés dans le niveau existent partout ; les sources posées par des pièces ne sont enregistrées que sur le **serveur** |
+| Pièce : `bIsRespawnPoint` — **v1.3** | Oui | `COND_InitialOnly` | Serveur | invite d'interaction côté client ; `HeatRadius`, `HeatBonus`, `PurifyRadius`, `PurifyRate` **non** répliqués |
+| Sac de mort (`AEMBDeathBag`) : `OwnerPlayerId` — **v1.3** | Oui | aucune | Serveur | **seule** information de propriété répliquée (la clé stable et le contenu restent serveur) ; `NetUpdateFrequency` 1, `NetCullDistance` 10 000 cm ; non dormant (choix documenté) |
+| Liaisons de réapparition, registre des sacs, bénéfice de sommeil | Non | — | Serveur (`UEMBRespawnSubsystem`) | — |
 | Personnage : sprint | Dans les **mouvements** (`FLAG_Custom_0` des saved moves de `UEMBCharacterMovementComponent`) | propriétaire → serveur | Serveur pour l'endurance (`ForbidSprint`, `Client_StopSprint`) ; vitesse rejouée à l'identique des deux côtés | plus de RPC `Server_SetSprinting` |
 | Personnage : déplacement, saut | `UCharacterMovementComponent` (moteur) | — | Serveur avec prédiction client native | coût du saut facturé serveur (`OnJumped`) |
 | Progression : `Level`, `TotalXP` | Oui (RepNotify `OnRep_Level`, `OnRep_TotalXP`) | aucune (tous les clients : UI de groupe) | Serveur | porté par le **PlayerState** (`NetUpdateFrequency` 10 Hz, `ForceNetUpdate` à chaque changement) |
@@ -1301,7 +1914,7 @@ L'identifiant est calculé une fois par connexion (`ControllerIds`) puis réutil
 | Construction : `BuildCostMultiplier` | Oui | `COND_OwnerOnly` | Serveur | l'aperçu du client calcule le même coût que le serveur (`GetEffectiveCost`) |
 | Inventaire : `CarryWeightBonus` | Oui (RepNotify) | `COND_OwnerOnly` | Serveur | la charge maximale (et donc la roulade prédite) est identique des deux côtés |
 | Pièce : `PlacerStableId` | Non | — | Serveur | identifiant stable du poseur, pour la sauvegarde |
-| Dragon vaincu d'après la sauvegarde | via `bIsDead` (RepNotify) + visibilité et collision de l'acteur (répliquées par le moteur) | aucune | Serveur | `OnRep_IsDead` diffuse `OnEncounterEnded` : arène calme aussi chez un client qui rejoint |
+| Boss vaincu d'après la sauvegarde | via `bIsDead` (RepNotify) + visibilité et collision de l'acteur (répliquées par le moteur) | aucune | Serveur | `OnRep_IsDead` diffuse `OnEncounterEnded` : arène calme aussi chez un client qui rejoint |
 | Événements monde (`UEMBProgressionSubsystem::WorldEvents`) | **Non** | — | Serveur seul | `IsWorldEventRecorded` renvoie faux sur un client ; un client déduit un boss vaincu de l'état répliqué de l'acteur |
 | Sauvegarde (`UEMBSaveSubsystem`) | Non | — | Serveur seul | aucune donnée de sauvegarde ne transite par le réseau |
 
@@ -1321,8 +1934,17 @@ L'identifiant est calculé une fois par connexion (`ControllerIds`) puis réutil
 | `Server_PlacePiece(FName, FTransform)` | `UEMBBuildingComponent` | Server, Reliable | `WithValidation` : NaN, nom vide, hors monde | demande de pose |
 | `Client_PlacementResult(EEMBPlacementResult, float)` | `UEMBBuildingComponent` | Client, Reliable | — | réponse du serveur (dont `LimitReached`) |
 | `Multicast_PlayCollapseEffects(bool)` | `AEMBBuildablePiece` | NetMulticast, Unreliable | — | effets d'effondrement |
-| `Multicast_PlayMontage`, `Multicast_StopMontages`, `Multicast_StartBreathVFX`, `Multicast_StopBreathVFX` | `AEMBDragonBoss` | NetMulticast, Reliable | — | montages et souffle du boss |
-| `Multicast_SpawnVFXAtLocation`, `Multicast_SpawnFireZoneVFX` (**nouveau v1.1**, une liste de positions par traînée), `Multicast_Telegraph`, `Multicast_ShowGroundMarker` | `AEMBDragonBoss` | NetMulticast, **Unreliable** | — | mise en scène ponctuelle du boss et marqueurs de foudre de l'arène |
+| `Multicast_PlayMontage`, `Multicast_StopMontages`, `Multicast_StartBreathVFX`, `Multicast_StopBreathVFX`, `Multicast_SpawnFireZoneVFX` (**Reliable depuis la v1.3**) | `AEMBBossBase` | NetMulticast, Reliable | — | montages, souffle, visuel des zones de feu |
+| `Multicast_SpawnVFXAtLocation`, `Multicast_Telegraph`, `Multicast_ShowGroundMarker` | `AEMBBossBase` | NetMulticast, **Unreliable** | — | mise en scène ponctuelle, ombres des plongeons, marqueurs de foudre de l'arène |
+| `Multicast_RuneRing(FVector, float, float, float)`, `Multicast_ResonanceFinished(bool, float)` — **v1.3** | `AEMBColossusBoss` | NetMulticast, Reliable | — | anneau runique à animer ; faisceaux de la Résonance |
+| `Multicast_TipFlash(FGameplayTag, float)` — **v1.3** | `AEMBSeraphBoss` | NetMulticast, Reliable | — | éclat de la pointe (signal d'esquive de la Feinte et de l'Estoc) |
+| `Multicast_PlayEcho(FGameplayTag, FVector)`, `Multicast_StartDash(FVector, FVector, float)` — **v1.3** | `AEMBSeraphShadow` | NetMulticast, Unreliable | — | rejeu et dash cosmétiques des clones |
+| `Multicast_Ring(bool)` — **v1.3** | `AEMBSeraphBell` | NetMulticast, Unreliable | — | sonnerie (efficace ou non) |
+| `Server_RequestRespawn()` — **v1.3** | `AEMBPlayerCharacter` | Server, Reliable | `WithValidation` | demande de réapparition ; refusée en silence avant 3 s (ou avant 30 s avec allié vivant si `bRespawnRequiresNoLivingAlly`) |
+| `Server_Interact(AActor*)` — **v1.3** | `AEMBPlayerCharacter` | Server, Reliable | `WithValidation` ; **anti-inondation 10 requêtes/s** (ignorées sans punir) | interaction instantanée ou début de maintien ; le serveur revérifie aptitude, portée et `CanInteract` |
+| `Server_CancelInteract()` — **v1.3** | `AEMBPlayerCharacter` | Server, Reliable | — | relâchement d'*Interagir* : fin du maintien |
+| `Client_InteractionEnded(bool)` — **v1.3** | `AEMBPlayerCharacter` | Client, Reliable | — | fin d'un maintien (réussi ou interrompu) → `OnInteractionHoldEnded` |
+| `Server_Consume(FName)` — **v1.3** | `UEMBSurvivalComponent` | Server, Reliable | contrôles serveur : ligne existante, ressource possédée, effet utile, 1,0 s entre deux consommations, plafond 5 demandes/s ; côté client, envois espacés | consommation d'un consommable (`RequestConsume`) |
 | `Server_UnlockGlyph(FName)` — **nouveau v1.2** | `UEMBProgressionComponent` (sur le PlayerState, appartenant à la connexion du joueur) | Server, Reliable | `WithValidation` : **toujours vrai** (identifiant inconnu = refus propre, pas une déconnexion) | achat d'un glyphe ; le serveur refait `CanUnlockGlyph` ; **aucune réponse en cas de refus** |
 | `Server_RankUpSkill(FName)` — **nouveau v1.2** | `UEMBProgressionComponent` | Server, Reliable | idem | un rang de compétence de plus ; le serveur refait `CanRankUpSkill` ; aucune réponse en cas de refus |
 
@@ -1336,7 +1958,9 @@ Les RPC de progression ne sont pas limités en fréquence (contrairement à `Ser
 - **Aperçu de construction** : placement, accrochage, couleur et intégrité prédite (graphe local + intégrité répliquée des voisins), coût effectif (multiplicateur répliqué) et verrou de glyphe (`IsPieceUnlocked` sur l'état de progression répliqué).
 - **Arbre de glyphes** : l'UI lit `GetGlyphState` / `CanUnlockGlyph` localement ; l'achat lui-même n'est **pas** prédit (l'état change au retour de la réplication).
 - **Déplacement et saut** : prédiction native du `CharacterMovementComponent`.
-- **Jamais prédits** : dégâts, jauges, inventaire, état de combat, effets d'un coup, pose effective d'une pièce, tout ce qui concerne le boss.
+- **v1.3 — Interaction** : la cible et l'invite sont calculées localement (`CanInteract` côté client) ; la barre de maintien est une **estimation** locale (`GetInteractionHoldProgress`) : seul le serveur décide de la réussite. Le temps restant avant réapparition est estimé par l'horloge serveur du GameState.
+- **v1.3 — Projectiles** : trajectoire simulée sur chaque client à partir de l'état répliqué (origine, vitesse, heure serveur de lancement) ; ce n'est pas une prédiction du joueur mais une simulation déterministe, les dégâts restant serveur.
+- **Jamais prédits** : dégâts, jauges (y compris survie), inventaire, état de combat, effets d'un coup, pose effective d'une pièce, consommation, mort, réanimation, réapparition, tout ce qui concerne les boss.
 
 ### 7.4 Limites connues (documentées dans le code ou constatées à la lecture)
 
@@ -1346,11 +1970,15 @@ Les RPC de progression ne sont pas limités en fréquence (contrairement à `Ser
 4. ~~Sprint sans « saved moves »~~ — **corrigé v1.1** : `UEMBCharacterMovementComponent` transporte le souhait de sprint dans les drapeaux compressés ; l'endurance reste facturée par un timer serveur (0,2 s).
 5. **Montages d'action courts en Unreliable** (attaques, roulade, parade) : un paquet perdu = une animation manquante chez un autre client (l'état de gameplay reste juste). Les montages durables (garde, charge, étourdissement, mort) sont désormais Reliable.
 6. **Animations évaluées sur serveur dédié** (`AlwaysTickPoseAndRefreshBones` sur le joueur et le dragon) : nécessaire aux notifies de fenêtre de coup et aux sockets, coût à mesurer. Les i-frames de roulade et la fenêtre de parade n'en dépendent plus (timers).
-7. **Multicasts du dragon** : réduits à 4 Reliable (montages, souffle) ; les 4 cosmétiques ponctuels sont Unreliable. Contrepartie : un `Multicast_SpawnFireZoneVFX` perdu laisse des zones de feu **invisibles mais dangereuses** pour ce client (voir I11).
+7. **Multicasts des boss** : 5 Reliable dans la base (montages, souffle, visuel des zones de feu — passé en Reliable en v1.3, ce qui supprime le risque de zones invisibles par perte de paquet) et 3 cosmétiques ponctuels Unreliable ; s'y ajoutent 3 Reliable propres (anneaux et Résonance du Colosse, éclat de la pointe de Nyxariel). Un télégraphe ou un marqueur au sol perdu reste possible (Unreliable), y compris l'**ombre** d'un plongeon de Nyxariel.
 8. **Push Model non utilisé** : `03_Scalabilite.md` (§ 13.1) le retient, mais aucune propriété n'est marquée sale explicitement dans le code et `net.IsPushModelEnabled` n'est pas réglé dans `Config/DefaultEngine.ini`. **Ouvert.**
 9. **Un acteur répliqué par pièce** (dormant) : **retenu pour la v1 par décision utilisateur** ; l'acteur « Base » à Fast Array (`03_Scalabilite.md` D5, Q4) reste une évolution. Le format de sauvegarde des pièces (`FEMBPieceSaveData`, une entrée par pièce, sans regroupement par base) est indépendant de ce choix : une migration vers le Fast Array ne demanderait qu'un changement du chargement (`SpawnSavedPieces`), pas du fichier. La dépendance `NetCore` reste déclarée.
 10. **Retour de coup asymétrique** : l'attaquant reçoit `OnHitConfirmed` pour tous ses coups ; les **autres** joueurs ne voient un coup porté au dragon ou à une pièce qu'à travers la variation de PV répliquée (pas de multicast de résultat côté dragon ni pièce).
 11. **PlayerState à 10 Hz** : le PlayerState est relevé de 1 Hz (défaut) à 10 Hz pour que les achats et niveaux se voient vite ; coût faible en coop 1-4, à garder en tête si des données volumineuses y sont ajoutées.
+12. **Projectiles poolés non dormants** (v1.3) : jusqu'à 96 acteurs répliqués (24 préchauffés, 72 dès la transition vers la phase 2) restent dans la liste de réplication même inactifs ; un projectile inactif ne coûte qu'une comparaison de propriétés à chaque passe, mais la **mise en sommeil réseau** n'est pas faite (amélioration notée dans l'en-tête, à mesurer).
+13. **Clones et projectiles sans rattrapage d'état** : un clone ne réplique que sa dissipation ; un client qui rejoint pendant un dash ne voit que la position d'origine. Un projectile recyclé dont deux lancements tombent entre deux réplications ne déclenche qu'un RepNotify (`Sequence` sur 8 bits) — perte cosmétique d'un tir chez ce client, aucun effet sur les dégâts.
+14. **Interaction et maintien** : la durée de 4 s est chronométrée par le serveur avec un contrôle toutes les 0,25 s ; la barre côté client peut donc finir jusqu'à un aller-retour réseau avant ou après la réanimation effective.
+15. **Environnement non répliqué** : l'heure et la météo poussées sur le serveur ne parviennent pas aux clients ; tout affichage client (température ambiante, jour/nuit) devra passer par un état répliqué à créer (GameState prévu).
 
 ---
 
@@ -1363,16 +1991,24 @@ EmberfallGDD/
 ├── Emberfall.uproject                      UE 5.4, module Runtime « Emberfall », plugins EnhancedInput et Niagara
 ├── README.md                               installation, réglages d'assets (collisions, Physics Assets)
 ├── Config/
-│   ├── DefaultEngine.ini                   Enhanced Input ; canaux EMBMeleeHit (GameTraceChannel1, Ignore par défaut)
-│   │                                       et EMBBuilding (GameTraceChannel2, Block par défaut)
+│   ├── DefaultEngine.ini                   Enhanced Input ; canaux EMBMeleeHit (GameTraceChannel1, Ignore par défaut),
+│   │                                       EMBBuilding (GameTraceChannel2, Block par défaut) et, v1.3,
+│   │                                       EMBProjectile (GameTraceChannel3, canal objet, Block par défaut)
 │   │                                       GlobalDefaultGameMode = EMBGameMode
 │   ├── DefaultGame.ini                     nom du projet ; [EMBProgressionSettings] tables, règles, barèmes ;
-│   │                                       [EMBSaveSubsystem] BuildPiecesTable ; cuisson de /Game/Data
+│   │                                       [EMBSaveSubsystem] BuildPiecesTable, intervalles ; v1.3 :
+│   │                                       [EMBRespawnSubsystem] DeathBagClass (vide = sac natif sans mesh),
+│   │                                       [EMBSurvivalComponent] ConsumablesTable ; cuisson de /Game/Data
 │   └── Tags/EmberfallGlyphs.ini            tags Glyph.* (colonne GrantedTag de DT_Glyphs)
 │       Tags/EmberfallSkills.ini            tags Skill.* (colonne GrantedTag de DT_SkillNodes)
 ├── Data/
-│   ├── DT_BuildPieces.csv                  31 lignes (FEMBBuildPieceRow, colonne RequiredGlyph v1.2)
+│   ├── DT_BuildPieces.csv                  32 lignes (FEMBBuildPieceRow, colonne RequiredGlyph v1.2 ; colonnes
+│   │                                       bIsRespawnPoint, HeatRadius, HeatBonus, PurifyRadius, PurifyRate v1.3 ;
+│   │                                       nouvelle ligne PurifyingBrazier)
 │   ├── DT_DragonAttacks.csv                11 lignes (FEMBDragonAttackRow, colonne StaminaDamage v1.1)
+│   ├── DT_ColossusAttacks.csv              NOUVEAU v1.3 : 9 lignes (même format, tags Attack.Guardian.*)
+│   ├── DT_SeraphAttacks.csv                NOUVEAU v1.3 : 9 lignes (même format, tags Attack.Seraph.*)
+│   ├── DT_Consumables.csv                  NOUVEAU v1.3 : 9 lignes (FEMBConsumableRow)
 │   ├── DT_Glyphs.csv                       36 lignes (FEMBGlyphRow)
 │   └── DT_SkillNodes.csv                   20 lignes (FEMBSkillNodeRow, colonnes PassiveStat, ValuePerRank,
 │                                           RequiredKnowledge v1.2)
@@ -1390,12 +2026,12 @@ Source/Emberfall/
 │   ├── EMBGameplayTags.h                   EMBTags (tags natifs)
 │   ├── EMBCombatTypes.h                    énums de combat, FEMBHitData, FEMBHitWindowParams, FEMBAttackDefinition, EMBCombatDefaults
 │   ├── EMBHitReceiver.h                    interface IEMBHitReceiver
-│   ├── EMBStatsComponent.h                 jauges (joueur et boss)
-│   ├── EMBCombatComponent.h                FSM de combat, détection et résolution des coups
+│   ├── EMBStatsComponent.h                 jauges (joueur et boss) ; v1.3 : multiplicateurs de survie, ReviveWithFraction
+│   ├── EMBCombatComponent.h                FSM de combat, détection et résolution des coups ; v1.3 : sortie de Dead, protection, résistance au feu
 │   ├── EMBAnimNotifyState_HitWindow.h      fenêtre de coup
 │   ├── EMBAnimNotifyState_ComboWindow.h    fenêtre de combo
 │   ├── EMBAnimNotifyState_IFrames.h        invulnérabilité / hyper-armure
-│   ├── EMBPlayerCharacter.h                personnage jouable
+│   ├── EMBPlayerCharacter.h                personnage jouable ; v1.3 : mort, réanimation, interaction (IEMBInteractable)
 │   ├── EMBCharacterMovementComponent.h     NOUVEAU v1.1 : sprint prédit (FEMBSavedMove, données de prédiction)
 │   ├── EMBProgressionTypes.h               énums (passifs, modes, états), FEMBPassiveModifiers, FEMBSkillRank,
 │   │                                       FEMBProgressionSaveData, lignes glyphes / compétences
@@ -1403,33 +2039,54 @@ Source/Emberfall/
 │   ├── EMBProgressionComponent.h           NOUVEAU v1.2 : état de progression d'un joueur (sur le PlayerState)
 │   ├── EMBProgressionSubsystem.h           NOUVEAU v1.2 : tables, événements monde, distribution
 │   ├── EMBPlayerState.h                    NOUVEAU v1.2 : PlayerState (porte la progression)
-│   ├── EMBGameMode.h                       NOUVEAU v1.2 : GameMode (cycle de vie de la sauvegarde)
+│   ├── EMBGameMode.h                       NOUVEAU v1.2 : GameMode (cycle de vie de la sauvegarde ; v1.3 : RespawnPlayer)
 │   ├── EMBDiscoveryVolume.h                NOUVEAU v1.2 : volume de lieu découvert
-│   ├── EMBSaveTypes.h                      NOUVEAU v1.2 : FEMBPieceSaveData, FEMBPlayerSaveData, FEMBWorldSaveData
+│   ├── EMBSaveTypes.h                      NOUVEAU v1.2 : FEMBPieceSaveData, FEMBPlayerSaveData, FEMBWorldSaveData ; v1.3 : FEMBDeathBagSaveData, champs v2
 │   ├── EMBSaveGame.h                       NOUVEAU v1.2 : UEMBSaveGame (version, contrôle de fin, migration)
 │   ├── EMBSaveSubsystem.h                  NOUVEAU v1.2 : sauvegarde (UGameInstanceSubsystem, serveur)
-│   ├── EMBInventoryComponent.h             inventaire de ressources, poids porté, bonus de charge, export/import
+│   ├── EMBInventoryComponent.h             inventaire de ressources, poids porté, bonus de charge, export/import ; v1.3 : RemoveAllResources, SanitizeResourceList
 │   ├── EMBBuildingTypes.h                  énums (dont LimitReached), EMBBuildingDefaults, FEMBBuildPieceRow, FEMBPlacementEvaluation
 │   ├── EMBBuildingComponent.h              mode construction, aperçu, RPC de pose, limites
-│   ├── EMBBuildablePiece.h                 pièce posée (répliquée, dormante, IEMBHitReceiver)
+│   ├── EMBBuildablePiece.h                 pièce posée (répliquée, dormante, IEMBHitReceiver ; v1.3 : IEMBInteractable, fonctions de la ligne)
 │   ├── EMBStructureSubsystem.h             graphe d'intégrité, sous-graphe dépendant, effondrement par niveaux
-│   ├── EMBDragonTypes.h                    FEMBDragonAttackRow, EMBDragonDefaults
-│   ├── EMBDragonBoss.h                     boss Vaelthyrax
-│   ├── EMBDragonAIController.h             contrôleur IA + schéma du BT
+│   ├── EMBDragonTypes.h                    FEMBDragonAttackRow (+ Kind 6 à 10 v1.3), EMBDragonDefaults
+│   ├── EMBBossBase.h                       NOUVEAU v1.3 : base des boss, FEMBBossAttackRow (alias), EMBBossDefaults
+│   ├── EMBBossTags.h                       NOUVEAU v1.3 : tags Attack.Guardian.* et Attack.Seraph.*
+│   ├── EMBBossAIController.h               NOUVEAU v1.3 : contrôleur IA générique (clés BB communes)
+│   ├── EMBDragonBoss.h                     boss Vaelthyrax (classe fille, réduit à ses spécificités)
+│   ├── EMBDragonAIController.h             classe fine + schéma du BT du dragon
 │   ├── EMBDragonArena.h                    arène évolutive (lave, foudre et tempête de phase 3)
-│   ├── BTTask_EMBSelectAttack.h
+│   ├── EMBColossusBoss.h                   NOUVEAU v1.3 : Colosse d'Ossivaire + schéma du BT, EMBColossusDefaults
+│   ├── EMBColossusArena.h                  NOUVEAU v1.3 : AEMBColossusArena et AEMBObelisk
+│   ├── EMBSeraphBoss.h                     NOUVEAU v1.3 : Nyxariel + schéma du BT, EMBSeraphDefaults, FEMBSeraphEcho
+│   ├── EMBSeraphArena.h                    NOUVEAU v1.3 : AEMBSeraphArena et AEMBSeraphBell
+│   ├── EMBSeraphShadow.h                   NOUVEAU v1.3 : ombre jumelle (clone)
+│   ├── EMBProjectile.h                     NOUVEAU v1.3 : projectile répliqué poolé, EMBProjectileDefaults
+│   ├── EMBInteractable.h                   NOUVEAU v1.3 : interface IEMBInteractable
+│   ├── EMBDeathBag.h                       NOUVEAU v1.3 : sac de mort
+│   ├── EMBRespawnSubsystem.h               NOUVEAU v1.3 : liaisons de réapparition et sacs (serveur)
+│   ├── EMBSurvivalTypes.h                  NOUVEAU v1.3 : EMBSurvivalDefaults, FEMBSurvivalSaveData, FEMBConsumableRow
+│   ├── EMBSurvivalComponent.h              NOUVEAU v1.3 : faim, soif, température, Corruption, consommables
+│   ├── EMBEnvironmentSubsystem.h           NOUVEAU v1.3 : environnement (local, non répliqué)
+│   ├── EMBEnvironmentVolume.h              NOUVEAU v1.3 : volume de biome
+│   ├── BTTask_EMBSelectAttack.h            commun aux trois boss
 │   ├── BTTask_EMBDragonBreath.h
 │   ├── BTTask_EMBDragonDiveAttack.h
-│   ├── BTService_EMBUpdateCombatContext.h
-│   └── BTDecorator_EMBDragonPhase.h
-└── Private/                                29 .cpp : un par en-tête (dont Emberfall.cpp, EMBGameplayTags.cpp) ;
-                                            EMBCombatTypes, EMBHitReceiver, EMBBuildingTypes, EMBDragonTypes,
-                                            EMBProgressionTypes, EMBSaveTypes : en-têtes seuls
+│   ├── BTTask_EMBColossusCharge.h          NOUVEAU v1.3
+│   ├── BTTask_EMBSeraphDash.h              NOUVEAU v1.3
+│   ├── BTTask_EMBSeraphPlunge.h            NOUVEAU v1.3
+│   ├── BTTask_EMBSeraphReposition.h        NOUVEAU v1.3
+│   ├── BTService_EMBUpdateCombatContext.h  commun
+│   └── BTDecorator_EMBDragonPhase.h        commun malgré son nom
+└── Private/                                47 .cpp : un par en-tête (dont Emberfall.cpp, EMBGameplayTags.cpp,
+                                            EMBBossTags.cpp) ; EMBCombatTypes, EMBHitReceiver, EMBInteractable,
+                                            EMBBuildingTypes, EMBDragonTypes, EMBProgressionTypes, EMBSaveTypes,
+                                            EMBSurvivalTypes : en-têtes seuls
 ```
 
-Des copies de sauvegarde `*.bak-20261023*` des fichiers modifiés coexistent dans `Public/`, `Private/`, `Data/` et `Config/` ; elles ne sont pas compilées (extension) mais sont à exclure du dépôt (`.gitignore`) ou à archiver après validation. Un fichier `Data/DT_SkillNodes.csv.tmp` est aussi présent : à vérifier (reliquat probable), **non supprimé**.
+Des copies de sauvegarde `*.bak-20261023*` de la v1.2 coexistent toujours (36 dans `Public/`, 28 dans `Private/`, d'autres dans `Data/` et `Config/`) ; elles ne sont pas compilées (extension) mais sont à exclure du dépôt (`.gitignore`) ou à archiver après validation. Depuis la v1.3 le dépôt git sert de sauvegarde (référentiel § 9.1) : aucune nouvelle copie `.bak`. Un fichier `Data/DT_SkillNodes.csv.tmp` est aussi présent : à vérifier (reliquat probable), **non supprimé**.
 
-Fichiers **prévus, non codés** : `EMBGameState.h/.cpp` (état de monde répliqué), `EMBPlayerController.h/.cpp` (HUD, menus), widgets UMG (`Public/UI/` si l'on sort de l'organisation « à plat » imposée par le référentiel § 1 — à arbitrer).
+Fichiers **prévus, non codés** : `EMBGameState.h/.cpp` (état de monde répliqué, dont heure et météo), `EMBPlayerController.h/.cpp` (HUD, menus), système météo / jour-nuit, widgets UMG (`Public/UI/` si l'on sort de l'organisation « à plat » imposée par le référentiel § 1 — à arbitrer).
 
 ### 8.2 Dépendances de modules (`Emberfall.Build.cs`, état réel)
 
@@ -1469,17 +2126,44 @@ EMBProgressionTypes ◄── EMBCombatComponent (FEMBPassiveModifiers)
                     ◄── EMBProgressionSubsystem ◄── EMBDragonBoss.cpp, EMBDiscoveryVolume.cpp
 EMBProgressionComponent ◄── EMBBuildingComponent.cpp (HasGlyph), EMBPlayerCharacter.cpp (PossessedBy)
 EMBSaveTypes (inclut EMBBuildingTypes, EMBInventoryComponent, EMBProgressionTypes) ◄── EMBSaveGame ◄── EMBSaveSubsystem
-EMBSaveSubsystem.cpp ──► structure, pièces, inventaire, jauges, combat, dragon, progression (tous les domaines)
+EMBSaveSubsystem.cpp ──► structure, pièces, inventaire, jauges, combat, boss, progression, survie, réapparition
 EMBBuildingComponent.cpp ──► EMBSaveSubsystem (GetStablePlayerId à la pose)
+
+v1.3 :
+EMBDragonTypes ◄── EMBBossBase (FEMBBossAttackRow = FEMBDragonAttackRow, EMBDragonDefaults) ◄── EMBDragonBoss,
+                   EMBColossusBoss ◄── EMBColossusArena ; EMBSeraphBoss ◄── EMBSeraphArena, EMBSeraphShadow
+EMBBossBase ◄── EMBBossAIController ◄── EMBDragonAIController ; BTTask_*, BTService_*, BTDecorator_* (base seule
+                ou classe fille pour les tâches propres)
+EMBCombatTypes ◄── EMBProjectile ◄── EMBSeraphBoss.cpp (pool) ; EMBHitReceiver ◄── EMBObelisk, EMBSeraphBell, EMBSeraphShadow
+EMBInteractable ◄── EMBPlayerCharacter, EMBDeathBag, EMBBuildablePiece
+EMBInventoryComponent ◄── EMBDeathBag, EMBRespawnSubsystem (FEMBResourceStack)
+EMBSurvivalTypes ◄── EMBSurvivalComponent (+ EMBCombatTypes, EMBProgressionTypes), EMBEnvironmentSubsystem,
+                     EMBEnvironmentVolume, EMBSaveTypes (FEMBSurvivalSaveData)
+EMBGameMode.cpp ──► EMBRespawnSubsystem, EMBSaveSubsystem (point sûr), EMBSurvivalComponent, EMBCombatComponent
+EMBBuildablePiece.cpp ──► EMBRespawnSubsystem (liaison, sommeil), EMBEnvironmentSubsystem (chaleur, purification),
+                          EMBSurvivalComponent (Corruption du lit)
+EMBProgressionComponent.cpp ──► EMBSurvivalComponent (SetPassiveModifiers)
 ```
 
-Pas de dépendance circulaire **entre en-têtes**. Liens nouveaux de la v1.2 : le **combat inclut les types de progression** (`FEMBPassiveModifiers`) ; la **construction lit la progression** (`IsPieceUnlocked`) et appelle la sauvegarde (`GetStablePlayerId`) dans son `.cpp` ; le **dragon appelle la progression** (`NotifyWorldEvent`, `IsWorldEventRecorded`) ; la **sauvegarde dépend de tous les domaines** (c'est son rôle, elle n'est incluse par aucun en-tête de jeu). Liens antérieurs à connaître : la **construction dépend du combat** (`EMBBuildablePiece` inclut `EMBHitReceiver.h` donc `EMBCombatTypes.h` ; `UEMBBuildingComponent` lit l'état `Dead` du `UEMBCombatComponent` par `FindComponentByClass`), et le **personnage relie inventaire et combat** (`UpdateEncumbrance`). Le combat, lui, ne connaît toujours ni la construction ni le dragon (il ne voit que l'interface `IEMBHitReceiver`).
+Pas de dépendance circulaire **entre en-têtes**. Liens nouveaux de la v1.2 : le **combat inclut les types de progression** (`FEMBPassiveModifiers`) ; la **construction lit la progression** (`IsPieceUnlocked`) et appelle la sauvegarde (`GetStablePlayerId`) dans son `.cpp` ; le **dragon appelle la progression** (`NotifyWorldEvent`, `IsWorldEventRecorded` ; depuis la v1.3 par `AEMBBossBase`, pour les trois boss) ; la **sauvegarde dépend de tous les domaines** (c'est son rôle, elle n'est incluse par aucun en-tête de jeu). Liens antérieurs à connaître : la **construction dépend du combat** (`EMBBuildablePiece` inclut `EMBHitReceiver.h` donc `EMBCombatTypes.h` ; `UEMBBuildingComponent` lit l'état `Dead` du `UEMBCombatComponent` par `FindComponentByClass`), et le **personnage relie inventaire et combat** (`UpdateEncumbrance`). Le combat, lui, ne connaît toujours ni la construction ni les boss (il ne voit que l'interface `IEMBHitReceiver`).
+
+Liens nouveaux de la v1.3 : la **survie** dépend du combat (abonnement à `OnHitReceived`, dégâts par `ApplyHitToActor`, résistance au feu) et des jauges, jamais l'inverse (elle **pousse** ses effets) ; la **construction** dépend de la réapparition, de l'environnement et de la survie (pièces fonctionnelles) ; le **GameMode** orchestre la réapparition (sauvegarde, réapparition, survie, combat). Aucun en-tête de jeu n'inclut `EMBSaveSubsystem.h`. `EMBBossBase.h` inclut `EMBDragonTypes.h` (le format de ligne du dragon sert de format commun) : renommer ce fichier toucherait les trois boss.
+
+### 8.4 Canaux de collision (`Config/DefaultEngine.ini`)
+
+| Canal | Slot moteur | Type / réponse par défaut | Rôle | Réglages faits dans le code | À régler dans l'éditeur |
+|---|---|---|---|---|---|
+| `EMBMeleeHit` | `ECC_GameTraceChannel1` | trace, **Ignore** | balayage de la lame du joueur (`HitTraceChannel`, `SweepMultiByChannel`) : ne voit que ce qui l'accepte explicitement | clones de Nyxariel : **Overlap** ; pièces de construction : **Ignore** explicite (les lames traversent les pièces) | Physics Asset des boss en Overlap (points faibles par os), capsules en Ignore, décor selon le besoin ; **obélisques et cloches** : voir V8 (section 9.5) |
+| `EMBBuilding` | `ECC_GameTraceChannel2` | objet, **Block** | placement et chevauchement des pièces (`PlacementOverlapChannel`) ; trace vers le haut du lit (`IsSheltered`) | pièces : Block | — |
+| `EMBProjectile` (**v1.3**) | `ECC_GameTraceChannel3` | objet, **Block** | type d'objet des projectiles de boss (`EMBProjectileDefaults::ObjectChannel`) : les autres objets « acceptent » le projectile et c'est lui qui décide (réponse effective = la plus faible des deux) | projectile : Block sur `WorldStatic` (piliers, cloches, obélisques arrêtent les plumes), Overlap sur `Pawn` (résolution par `ApplyHitToActor`), Ignore sur `WorldDynamic` et sur son propre canal | — |
+
+Autres canaux moteur utilisés : `Visibility` (traces d'interaction : la sphère du sac le bloque ; ligne de vue du Cataclysm par défaut, `LineOfSightChannel`), `Pawn` (chevauchement du sac). La charge du Colosse et le dash de Nyxariel au sol balaient contre `WorldStatic` et `WorldDynamic` seulement (les joueurs ne bloquent pas la course).
 
 ---
 
 ## 9. Écarts code ↔ référentiel et points de revue
 
-Statut établi le 23/10/2026 par relecture du code (non compilé, non exécuté) : **Corrigé** = le code fait désormais ce que demande le référentiel (v1.2) ou la piste proposée ; **Partiel** = corrigé avec une réserve ; **Ouvert** = rien n'a changé ou le manque persiste. **Rien n'a été compilé ni testé** : aucun statut ci-dessous ne vaut validation fonctionnelle.
+Statut établi le 23/10/2026 (v1.2), **mis à jour le 27/10/2026 (v1.3)** par relecture du code (non compilé, non exécuté) : **Corrigé** = le code fait désormais ce que demande le référentiel (v1.3) ou la piste proposée ; **Partiel** = corrigé avec une réserve ; **Ouvert** = rien n'a changé ou le manque persiste. **Rien n'a été compilé ni testé** : aucun statut ci-dessous ne vaut validation fonctionnelle.
 
 ### 9.1 Écarts entre le code et `00_Constantes_et_Contrats.md`
 
@@ -1501,7 +2185,10 @@ Statut établi le 23/10/2026 par relecture du code (non compilé, non exécuté)
 | E14 | § 7.1 (v1.2) : subsystem de progression « actif sur le serveur » | — | Créé sur serveur **et** clients (lecture des tables par l'UI et `IsPieceUnlocked`) ; distribution et `WorldEvents` serveur seul. | Conforme en substance (préciser le texte) |
 | E15 | § 7.3 (v1.2) : passifs poussés « à chaque changement et à chaque possession » | — | `RefreshAll` → `PushModifiersToCurrentPawn` (serveur) et `AEMBPlayerCharacter::PossessedBy` → `ApplyModifiersToPawn`. | **Conforme** |
 | E16 | § 8 (v1.2) : constructions sauvegardées avec « classe (soft path) » | — | `PieceClassPath` est écrit mais **ignoré au chargement** : classe, matériau et catégorie sont relus dans `DT_BuildPieces` (un fichier modifié ne peut pas charger une classe arbitraire). | Conforme (renforcé) |
-| E17 | § 7.2 (v1.2) : XP Gardien 6 000, Séraphe 15 000 | — | Valeurs présentes dans `UEMBProgressionSettings` mais **aucun émetteur** (boss non codés) : voir P3. | **Ouvert** (hors périmètre code actuel) |
+| E17 | § 7.2 (v1.2) : XP Gardien 6 000, Séraphe 15 000 | — | **v1.3** : le Colosse et Nyxariel émettent `Event.Boss.Killed.Guardian` / `.Seraph` ; `AEMBBossBase::GetDefeatXP` lit `GuardianXP` / `SeraphXP` / `DragonXP` selon le tag. | **Corrigé** (non testé) |
+| E18 | § 11.1 (v1.3) : base commune, dragon « sans changer son comportement ni ses valeurs » | — | Le dragon dérive de `AEMBBossBase` ; ses constantes restent dans `EMBDragonDefaults`. Écart de **comportement** constaté à la lecture : `Multicast_SpawnFireZoneVFX` est passé d'Unreliable à Reliable (amélioration, voir I11) ; la rencontre du dragon peut désormais être **abandonnée** après 30 s de wipe (règle § 11.1, nouvelle pour lui). | Conforme (écarts voulus) |
+| E19 | § 9.2 (v1.3) : « mort par dégâts continus ou chute hors du monde : sac au dernier point sûr » | — | `WasKilledInLethalZone` (dégâts continus ou `FellOutOfWorld`) → `GetLastSafeTransform`. Une mort par **lave sur un sol existant** n'est un cas « zone létale » que si le coup fatal est un dégât continu (c'est le cas de la lave codée) ; la limite décrite dans `UEMBRespawnSubsystem::DropDeathBag` est donc couverte par le GameMode. | **Conforme** |
+| E20 | § 11.2 / § 11.3 (v1.3) : valeurs chiffrées des boss | — | Reprises dans `EMBColossusDefaults` / `EMBSeraphDefaults` et dans les CSV ; les valeurs **absentes** du référentiel (vitesse et dépassement de la charge, cadence des anneaux, altitude et orbite de Nyxariel, tailles et durées de vie des projectiles, taille du pool, prédiction des plongeons, vulnérabilité ×1,5 de Nyxariel…) sont marquées **(\*)** dans les en-têtes. | Conforme ; **(\*) à valider** (V9) |
 
 ### 9.2 Incohérences entre composants repérées à la lecture
 
@@ -1511,15 +2198,15 @@ Statut établi le 23/10/2026 par relecture du code (non compilé, non exécuté)
 | I2 | Lame sur `ECC_Pawn` : capsule touchée, points faibles jamais déclenchés | Balayage sur `EMBMeleeHit` (GameTraceChannel1) ; pour chaque acteur, l'impact qui porte un os est préféré. Fonctionnera dès que les assets seront réglés (Physics Asset du dragon en Overlap, capsule en Ignore). | **Corrigé** côté code (réglage d'assets à faire) |
 | I3 | Dégâts continus esquivables, counter-hit et multicast en rafale | Drapeau `bDamageOverTime` : dégâts directs dans `ReceiveHit` (ni esquive, garde, parade, counter-hit ni multicast) ; pas de poise dans le chemin « simples jauges ». | **Corrigé** |
 | I4 | Posture de parade appliquée directement aux jauges du boss | `ApplyParryPosture` envoie un coup de posture pur (0 dégât, 35 de posture) via `ReceiveEMBHit` quand l'attaquant implémente `IEMBHitReceiver` : invulnérabilité de transition et règle « pas de posture pendant l'étourdissement » respectées. | **Corrigé** |
-| I5 | `SetWeaponMesh` jamais appelé | Toujours aucun appelant : la détection repose sur les sockets `weapon_base` / `weapon_tip` du squelette du personnage. | **Ouvert** (équipement non codé) |
+| I5 | `SetWeaponMesh` jamais appelé | Toujours aucun appelant : la détection repose sur les sockets `weapon_base` / `weapon_tip` du squelette du personnage. v1.3 : même situation pour `UEMBSurvivalComponent::SetInsulation` (isolation thermique de l'équipement, 0 en v1). | **Ouvert** (équipement non codé) |
 | I6 | Aucun retour de coup sur le dragon | `Client_ConfirmHit` → `OnHitConfirmed` sur le client de l'attaquant (pour le dragon, les pièces et les créatures). Les autres joueurs n'ont toujours que la variation de PV (limite 7.4-10). | **Partiel** |
 | I7 | Mise à l'échelle à la première détection | Devenu la règle du référentiel v1.1 (« figée au début de la rencontre ») ; `BeginEncounter` est en plus appelé avant tout dégât. | **Corrigé** (par arbitrage) |
 | I8 | Pièces sans base ni propriétaire | **v1.2 : identifiant persistant du poseur** `PlacerStableId` (serveur seul), renseigné dès la pose par `GetStablePlayerId`, sauvegardé et restauré (`RestoreFromSave`) ; `PlacerPlayerId` de session reste répliqué (`COND_InitialOnly`) et vaut `INDEX_NONE` après un chargement. Réserves restantes : l'identifiant n'est stable qu'avec un vrai service en ligne (invités identifiés par leur **nom**, hôte = `LocalHost`, § 6.5) ; l'identifiant de base (`GetBaseId`) reste non persistant et change quand la base change ; aucune limite « bases par joueur » ; `Owner` toujours nul ; aucun système ne **lit** encore le poseur (droits, tir ami). | **Partiel** (sauvegarde : corrigé) |
-| I9 | `OnBossDefeated` sans abonné | **v1.2** : la mort du dragon appelle directement `UEMBProgressionSubsystem::NotifyWorldEvent` (XP 60 000 et déclencheur aux participants, enregistrement de l'événement, autosave). `OnBossDefeated` reste diffusé, sans abonné C++ (mise en scène Blueprint possible). | **Corrigé** |
+| I9 | `OnBossDefeated` sans abonné | **v1.2** : la mort du dragon appelle directement `UEMBProgressionSubsystem::NotifyWorldEvent` (XP 60 000 et déclencheur aux participants, enregistrement de l'événement, autosave). `OnBossDefeated` reste diffusé, sans abonné C++ (mise en scène Blueprint possible). **v1.3** : porté par `AEMBBossBase::HandleStatsDeath` pour les trois boss. | **Corrigé** |
 | I10 | Réglage de la posture du dragon par réflexion | Affectation directe dans `ConfigureStatsDefaults`. | **Corrigé** |
-| I11 | Zones de feu invisibles chez les clients | `Multicast_SpawnFireZoneVFX` (Unreliable) diffusé une fois par traînée, au nettoyage de la tâche. Réserves : visuel absent pendant la traînée (jusqu'à 2,5 s alors que la zone fait déjà mal) ; un paquet perdu = zones invisibles mais dangereuses ; client arrivé en cours de combat : rien ; `SpawnSystemAtLocation` sans pool (contraire à `03_Scalabilite.md` D8). | **Partiel** |
+| I11 | Zones de feu invisibles chez les clients | **v1.3** : `Multicast_SpawnFireZoneVFX` est **Reliable** et envoyé à la pose de chaque zone (plus de perte de paquet ni d'attente de la fin de traînée, d'après le commentaire de l'en-tête). Réserves restantes : client arrivé en cours de combat : rien ; `SpawnSystemAtLocation` sans pool (contraire à `03_Scalabilite.md` D8). | **Partiel** (amélioré) |
 | I12 | Le serveur ignore le mode construction | Inchangé : seul le client filtre les entrées de combat. Le serveur refuse en revanche toute pose à un joueur mort. | **Ouvert** (acceptable) |
-| I13 | — Réapparition | **v1.2** : `AEMBGameMode` existe, mais ne gère que la sauvegarde. Un joueur mort reste en `Dead`, mouvement et entrées désactivés, sans réapparition ni remise à zéro des jauges. Seul effet de bord : à la déconnexion, un joueur mort est enregistré PV pleins au dernier point sûr (`DeathSaveBehavior`) ; **se déconnecter puis se reconnecter le ressuscite** (voir P6). | **Ouvert** (mort et réapparition non codées) |
+| I13 | — Réapparition | **v1.3** : attente de réapparition répliquée, réapparition (3 s / 30 s) par `AEMBGameMode::RespawnPlayer` au point lié ou au `PlayerStart`, sac de mort, réanimation par un allié, valeurs de réapparition et de réanimation, protection de 3 s (§ 2.13 à 2.15). Réserve : quitter la partie en étant mort évite le sac (V5). | **Corrigé** (réserve V5, non testé) |
 | I14 | — Progression | **v1.2** : composant, subsystem, réglages, PlayerState, volumes de découverte, CSV `DT_SkillNodes`, verrou `RequiredGlyph` (`IsPieceUnlocked` consulte `HasGlyph`), six passifs de combat, le coût de construction et la charge appliqués. Réserves : P1 à P4, P7 (section 9.4). | **Corrigé** (avec réserves) |
 | I15 | — Push Model (limite 7.4-8) | Non utilisé (ni marquage explicite, ni réglage `.ini`). | **Ouvert** |
 
@@ -1538,20 +2225,39 @@ Statut établi le 23/10/2026 par relecture du code (non compilé, non exécuté)
 
 | # | Constat | Conséquence | Piste | Gravité |
 |---|---|---|---|---|
-| P1 | Passifs de survie **stockés mais non appliqués** : `HungerThirstRate`, `HarvestYield`, `ComfortRange`, `CorruptionGain`, `FireResistance` (jauges de faim/soif, récolte, confort, corruption et résistances non codées). | Les nœuds Estomac de fer, Récolteur, Peau tannée, Volonté pure et Communion draconique s'achètent sans effet. | Brancher chaque statistique quand son système existe ; d'ici là, griser ces nœuds dans l'UI ou les retirer de `DT_SkillNodes`. | Moyenne |
+| P1 | **v1.3** : `HungerThirstRate`, `ComfortRange`, `CorruptionGain` appliqués par la survie, `FireResistance` par le combat. Reste **`HarvestYield`**, stocké et transmis mais lu par aucun système (récolte non codée). | Le nœud Récolteur s'achète sans effet. | Brancher à la récolte quand elle existera ; d'ici là, griser le nœud ou le retirer de `DT_SkillNodes`. | Faible (était Moyenne) |
 | P2 | Compétences **actives non exécutées** (`bIsActive`, `PassiveStat = None`) : elles accordent seulement leur `GrantedTag`, que **aucun système ne lit** (`GrantedTags` / `HasGrantedTag` sans consommateur). | Points d'Éveil dépensés sans effet. | Système d'activation (entrée, coût, recharge, effet) à concevoir ; même remarque pour l'UI. | Moyenne |
-| P3 | **Gardien et Séraphe absents** : aucun émetteur de `Event.Boss.Killed.Guardian` ni `.Seraph`. `GuardianXP`, `SeraphXP` et 2 points d'Éveil sont inaccessibles, ainsi que les glyphes secrets `S_GuardianCore` et `S_SeraphFeathers`. Surtout, **`G_DraconicForge` (non secret) exige `Event.Boss.Killed.Seraph`** : il reste `Locked` à jamais, donc la **forge draconique** (`RequiredGlyph = G_DraconicForge`) n'est pas constructible. | Une partie de l'arbre et de la construction est bloquée dans le build actuel. | Coder les deux boss, ou, pour la tranche verticale, retirer temporairement ces déclencheurs des données. | Haute (pour la tranche verticale) |
-| P4 | **Pas de source d'XP courante** : seules sources codées = dragon (60 000, une fois) et volumes de découverte (XP réglée par volume). L'XP cumulée pour le niveau 80 est de l'ordre de 3,4 millions (calcul sur la formule du référentiel). Créatures, récolte, artisanat : non codés. | Montée en niveau quasi impossible ; les glyphes à `RequiredLevel` élevé sont inaccessibles. | Définir les sources d'XP au GDD ; prévoir une commande de triche (serveur, éditeur seulement) pour tester l'arbre. | Haute (pour tester) |
-| P5 | **Pas de réinitialisation du boss après un wipe** (« hors périmètre » dans `EMBDragonBoss.h`) : PV, phase, mise à l'échelle figée et `bEncounterStarted` restent tels quels ; `IsEncounterActive` redevient faux (la sauvegarde reprend). Le combat n'étant pas sauvegardé, **recharger le monde remet le dragon à neuf**. | Comportement différent selon que l'on recharge ou non ; exploitation possible (affaiblir le dragon, mourir, revenir). | Réinitialisation du boss quand plus aucun joueur vivant n'est dans le rayon (avec délai), à décider au GDD avec la réapparition. | Moyenne |
-| P6 | **Mort et réapparition non codées** (I13). Effet de bord de la sauvegarde : un joueur mort qui se déconnecte est enregistré PV pleins au dernier point sûr (`RespawnAtSafePoint`) et revient **vivant** à la reconnexion. | « Résurrection par déconnexion » ; en solo, quitter et relancer est le seul moyen de rejouer après une mort. | Coder la mort et la réapparition dans `AEMBGameMode` (lieu, délai, pénalité : QA8), puis revoir `DeathSaveBehavior`. | Haute |
+| P3 | ~~Gardien et Séraphe absents~~ **v1.3** : le Colosse et Nyxariel sont codés et émettent leur événement de défaite ; `GuardianXP`, `SeraphXP`, les 2 points d'Éveil, les glyphes secrets `S_GuardianCore`, `S_SeraphFeathers` et `G_DraconicForge` (donc la forge draconique) deviennent atteignables **une fois les boss posés dans un niveau** avec leurs Blueprints, BT et DataTables. | — | Recette en jeu (rien n'est compilé) : défaite de chaque boss → XP, point d'Éveil, glyphes. | **Corrigé** côté code (non testé) |
+| P4 | **Pas de source d'XP courante** : seules sources codées = les trois boss (6 000 + 15 000 + 60 000, une fois chacun, v1.3) et volumes de découverte (XP réglée par volume). L'XP cumulée pour le niveau 80 est de l'ordre de 3,4 millions (calcul sur la formule du référentiel). Créatures, récolte, artisanat : non codés. | Montée en niveau quasi impossible ; les glyphes à `RequiredLevel` élevé sont inaccessibles. | Définir les sources d'XP au GDD ; prévoir une commande de triche (serveur, éditeur seulement) pour tester l'arbre. | Haute (pour tester) |
+| P5 | **v1.3** : réinitialisation codée (`ResetEncounter` après 30 s sans joueur vivant dans l'arène : PV pleins, attaque, étourdissement, vol, menace et zones de feu effacés, échelle coop libérée) ; **la phase est conservée** (choix du référentiel § 11.1). Reste l'écart avec le rechargement : le combat n'étant pas sauvegardé, recharger le monde remet le boss **en phase 1** alors qu'un wipe le laisse dans sa phase. | Voir V6. | — | **Partiel** |
+| P6 | ~~Mort et réapparition non codées~~ **v1.3** : codées (I13). L'effet de bord change de forme : un joueur mort qui **quitte** est enregistré vivant (PV pleins, au point lié ou au dernier point sûr) **sans sac**, inventaire conservé (V5). | « Quitter plutôt que réapparaître » évite la perte de l'inventaire. | Voir V5. | Moyenne (était Haute) |
 | P7 | RPC `Server_UnlockGlyph` / `Server_RankUpSkill` : **aucun retour en cas de refus** (journal `Verbose` seulement) et **aucune limitation de fréquence**. | L'UI ne peut pas afficher le motif d'un refus serveur (désynchronisation rare mais possible) ; un client peut inonder le serveur de demandes (coût : un recalcul par demande acceptée, faible par demande refusée). | `Client_` RPC de résultat (motif) ou délégué ; anti-spam comme `Server_PlacePiece`. | Faible |
-| P8 | `DeathSaveBehavior` (**à valider**) : `RespawnAtSafePoint` par défaut. | Voir P6 ; le choix dépend de la future règle de mort. | Trancher au GDD en même temps que QA8. | Moyenne |
+| P8 | `DeathSaveBehavior` (**à valider**) : `RespawnAtSafePoint` par défaut ; v1.3 : position = point lié valide, sinon dernier point sûr. | Voir P6 / V5. | Trancher au GDD avec V5. | Moyenne |
 | P9 | `SecretGlyphMode` (**à valider**) : `RevealOnly` par défaut ; `AutoUnlock` ne débloque que si niveau, parents et savoirs sont remplis (sinon révèle). | Économie des points de glyphe différente selon le mode. | Trancher au GDD (ancienne QA2). | Moyenne |
-| P10 | **Sauvegarde illisible — comportement à valider.** (a) Version inconnue ou < 1 : le fichier est écarté et **toutes les écritures sont bloquées pour la session**, mais la partie démarre (monde vierge ou autre fichier) **sans aucun message au joueur** (journal seulement ; `OnSaveCompleted` n'est pas diffusé, `IsWriteBlocked` n'est lu par rien) : le joueur joue sans que rien ne soit sauvegardé. (b) Fichier que le moteur ne sait pas désérialiser : reçu comme `nullptr`, donc traité comme **absent**, **sans blocage** ; si les deux fichiers sont dans ce cas, le monde démarre vierge et la première autosave **écrase** le fichier A. (c) La détection d'un fichier tronqué par les champs de fin est à **tester** (§ 6.4). (d) `BuildPiecesTable` absente alors que le fichier contient des pièces : écritures bloquées, même silence. | Perte de progression silencieuse (a, d) ou écrasement d'un fichier peut-être récupérable (b). | Décider : refuser de démarrer le monde, ou démarrer avec un avertissement bloquant à l'écran ; dans le cas (b), renommer le fichier illisible (copie `.corrupt`) avant toute écriture. | **Haute** |
+| P10 | **Sauvegarde illisible — comportement à valider.** (a) Version supérieure au binaire (`TooRecent` ; v1.3 : une version < 1 est désormais simplement ignorée, sans blocage) : le fichier est écarté et **toutes les écritures sont bloquées pour la session**, mais la partie démarre (monde vierge ou autre fichier) **sans aucun message au joueur** (journal seulement ; `OnSaveCompleted` n'est pas diffusé, `IsWriteBlocked` n'est lu par rien) : le joueur joue sans que rien ne soit sauvegardé. (b) Fichier que le moteur ne sait pas désérialiser : reçu comme `nullptr`, donc traité comme **absent**, **sans blocage** ; si les deux fichiers sont dans ce cas, le monde démarre vierge et la première autosave **écrase** le fichier A. (c) La détection d'un fichier tronqué par les champs de fin est à **tester** (§ 6.4). (d) `BuildPiecesTable` absente alors que le fichier contient des pièces : écritures bloquées, même silence. | Perte de progression silencieuse (a, d) ou écrasement d'un fichier peut-être récupérable (b). | Décider : refuser de démarrer le monde, ou démarrer avec un avertissement bloquant à l'écran ; dans le cas (b), renommer le fichier illisible (copie `.corrupt`) avant toute écriture. | **Haute** |
 | P11 | Identifiant stable (§ 6.5) : invités identifiés par leur **nom** (non unique, change si le joueur se renomme) ; l'hôte local est toujours `LocalHost`, donc lié au **monde** et non au compte ; avec l'Online Subsystem NULL (PIE, LAN) aucun client n'a d'identifiant fiable. | Personnage perdu ou repris par un autre en LAN / tests ; acceptable avec Steam ou EOS. | Exiger un service en ligne pour la coop publique ; documenter la limite pour les tests. | Moyenne |
 | P12 | Coûts **non mesurés** sur le thread de jeu : `BuildSnapshot` capture jusqu'à 15 000 pièces en une frame à chaque autosave ; `SpawnSavedPieces` crée toutes les pièces en une passe au démarrage ; tables de progression chargées en synchrone. | Hitch possible toutes les 5 minutes sur une grosse base. | Profiler (Unreal Insights) avec 5 000 et 15 000 pièces ; étaler par lots si nécessaire (pistes notées dans le code). | Moyenne |
-| P13 | Report de la sauvegarde pendant une rencontre : aucune écriture tant qu'au moins un joueur vivant reste à moins de 100 m d'un dragon engagé et vivant, **sans durée maximale**. | Une rencontre très longue (ou un joueur qui reste près du dragon sans combattre) bloque l'autosave. | Plafond de report (ex. sauvegarde forcée après N minutes, hors données du combat). | Faible |
-| P14 | **Rien n'a été compilé ni exécuté.** Points de compilation à surveiller en priorité : appel `SetNetUpdateFrequency` dans `AEMBPlayerState` (accesseur à confirmer sous UE 5.4), alias `using FEMBResourceStack = FEMBResourceEntry` dans un en-tête analysé par UHT, nouvelle dépendance `DeveloperSettings`. | Les statuts « Corrigé » de ce document sont des constats de lecture, pas des tests. | Compiler (Editor + Server), puis une recette PIE à 2 joueurs : achat de glyphe, mort du dragon, autosave, rechargement, reconnexion. | **Haute** |
+| P13 | ~~Report sans durée maximale~~ **v1.3** : report plafonné à 300 s (`DeferredSinceTime`), puis écriture forcée. | — | — | **Corrigé** (non testé) |
+| P14 | **Rien n'a été compilé ni exécuté** (toujours vrai en v1.3, sur environ 26 700 lignes). Points de compilation à surveiller en priorité : `SetNetUpdateFrequency` (PlayerState, boss, projectiles, obélisques, cloches, clones ; accesseur à confirmer sous UE 5.4), alias `using FEMBResourceStack` et `using FEMBBossAttackRow` dans des en-têtes analysés par UHT, `PURE_VIRTUAL` dans une `UCLASS(Abstract)`, tags natifs du namespace `EMBBossTags`, `DOREPLIFETIME` d'une `USTRUCT` (`FEMBProjectileNetState`) avec RepNotify à paramètre. | Les statuts « Corrigé » de ce document sont des constats de lecture, pas des tests. | Compiler (Editor + Server), puis une recette PIE à 2 joueurs (§ 9.5, V12). | **Haute** |
+
+### 9.5 Points ouverts relevés à la relecture v1.3 (mort, survie, boss, sauvegarde v2)
+
+Liste volontairement honnête : ce qui suit n'est **pas** fait, ou fait avec une limite connue.
+
+| # | Constat | Conséquence | Piste | Gravité |
+|---|---|---|---|---|
+| V1 | **Météo et cycle jour/nuit non codés.** Seuls leurs points d'entrée existent : `UEMBEnvironmentSubsystem::SetTimeOfDay` (défaut 12 h, donc **jamais la nuit**) et `SetWeatherTemperatureOffset` (défaut 0). Personne ne les appelle. L'environnement n'est pas répliqué. | Le malus de nuit (−8 °C, Corruption ×2) et la météo n'ont aucun effet en jeu ; aucun affichage client possible de l'heure. | Coder un système d'heure et de météo **serveur** qui appelle ces setters, et répliquer l'heure (GameState prévu). | Moyenne |
+| V2 | **Compétences actives non exécutées** (P2 inchangé). | Points d'Éveil dépensés sans effet. | Système d'activation à concevoir. | Moyenne |
+| V3 | **Récolte non codée** : `HarvestYield` sans consommateur (P1), aucune source d'XP courante (P4 inchangé). | Nœud Récolteur sans effet ; montée en niveau très lente. | Récolte et sources d'XP au GDD. | Moyenne |
+| V4 | **Équipement non codé** : ni arme équipable (`SetWeaponMesh`, I5) ni isolation thermique (`SetInsulation` jamais appelé, isolation = 0). | La plage de confort ne dépend que du biome, de la nuit (inactive), des feux et du passif `ComfortRange`. | À traiter avec l'équipement. | Faible |
+| V5 | **Quitter en étant mort évite le sac.** `Logout` n'appelle que `CapturePlayer`, qui enregistre le joueur mort **vivant** (PV pleins, survie de réapparition, au point lié ou au dernier point sûr) avec son inventaire, sans créer de sac (choix documenté dans `EMBSaveSubsystem.cpp`). | Un joueur peut contourner la pénalité de mort en quittant pendant l'attente (et en solo, en quittant le jeu). | Décider au GDD : déposer le sac au `Logout` d'un joueur mort (appel de `DropDeathBag` avant la capture) ou assumer la tolérance. | Moyenne |
+| V6 | **Phase de boss conservée après un wipe**, mais **perdue au rechargement** (le combat n'est pas sauvegardé). Après un abandon, le boss revient à PV pleins dans la phase atteinte : en phase 3 du dragon, Cataclysm 20 s après la reprise ; les seuils déjà franchis ne se redéclenchent pas. | Combat plus dur après un wipe tardif, plus facile après un rechargement ; incohérence entre les deux chemins. | Trancher au GDD : conserver la phase (et la sauvegarder) ou revenir en phase 1 dans les deux cas (avec un état d'arène réversible). | Moyenne |
+| V7 | **Projectiles poolés jamais mis en sommeil réseau** (limite 7.4-12) ; le pool atteint 72 acteurs dès la transition vers la phase 2 et peut monter à 96. | Coût de réplication constant pendant tout le combat contre Nyxariel (faible par acteur, non mesuré). | `SetNetDormancy(DORM_DormantAll)` à `ReturnToPool`, `FlushNetDormancy` au `Launch` ; mesurer avec Network Insights. | Faible |
+| V8 | **Obélisques et cloches peut-être intouchables à l'épée** : ils utilisent le profil `BlockAll` ; or, selon la description de ce profil moteur, un canal personnalisé y garde **sa propre réponse par défaut**, et `EMBMeleeHit` est en `Ignore` par défaut. Le balayage de la lame (canal `EMBMeleeHit`) ne les verrait alors pas. Les commentaires du code affirment le contraire. | Si confirmé : Résonance impossible à contrer en détruisant les obélisques, cloches inutilisables, donc mécaniques d'arène inopérantes. | Vérifier dans l'éditeur ; au besoin `SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Overlap)` sur leur mesh (comme les clones). Même question que N4 pour les pièces (qui, elles, ignorent explicitement le canal). | **Haute** (à vérifier en premier) |
+| V9 | **Valeurs (\*) à valider** : toutes les constantes marquées (\*) dans `EMBColossusDefaults`, `EMBSeraphDefaults` et `EMBSurvivalDefaults` sont des choix d'implémentation hors référentiel (charge 2 000 cm/s et dépassement 500 cm, anneaux à 20 Hz, orbite 1 100 cm à 200 cm de hauteur, dash et ses pentes, tailles et durées de vie des projectiles, pool 24/72/96, prédiction des plongeons, vulnérabilité ×1,5 de Nyxariel, vitesse au sol 800 cm/s…). S'y ajoutent les règles « à valider » du référentiel (`DeathSaveBehavior`, `SecretGlyphMode`). | Équilibrage non éprouvé. | Playtest, puis report des valeurs retenues dans le référentiel. | Moyenne |
+| V10 | **Sac déposé loin pour toute mort par dégâts continus** : brûlure et zones de feu du dragon, lave, faim, soif, intoxication rendent `WasKilledInLethalZone` vrai ; le sac part au dernier point sûr, qui n'est **pas** relevé pendant une rencontre de boss (souvent hors de l'arène). | Comportement correct pour la lave et le vide, surprenant pour une mort par brûlure ou par faim en terrain accessible. | Restreindre la « zone létale » à la lave et à la chute, ou tester l'accessibilité du lieu de la mort. | Faible |
+| V11 | **Mort pendant la protection** : la chute hors du monde tue par `UEMBStatsComponent::ApplyDamage` direct, qui ne passe pas par la protection de 3 s ; les autres dégâts, y compris continus, sont bloqués. | Cohérent (le vide doit tuer) ; à garder en tête si d'autres morts « système » sont ajoutées. | — | Info |
+| V12 | **Rien n'est compilé ni exécuté** (P14). Aucun asset n'existe : Blueprints des trois boss et de leurs arènes, `BT_` / `BB_`, DataTables importées, actions `IA_Interact` / `IA_Respawn`, Blueprint du sac (`DeathBagClass`), volumes de biome posés dans un niveau. | Tous les statuts « Corrigé » sont des constats de lecture. | Compiler (Editor + Server) ; recette PIE à 2 joueurs : mort → sac → réapparition au lit, réanimation, quitter mort, faim/soif/Corruption, consommables, feu de camp et brasero, chaque boss (phases, wipe, défaite, XP), autosave et rechargement d'un fichier v1. | **Haute** |
 
 ---
 
@@ -1563,11 +2269,15 @@ Statut établi le 23/10/2026 par relecture du code (non compilé, non exécuté)
 | QA2 | Glyphe secret : l'événement **révèle** (puis achat) ou **débloque** directement ? Codé : réglage `SecretGlyphMode`, `RevealOnly` par défaut (**à valider**, P9). | GDD |
 | QA3 | ~~Barème de progression~~ Fixé au référentiel v1.2 § 7.2 (niveau 80, points d'Éveil dès le niveau 2, 3 boss, découverte non partagée). Reste : **sources d'XP** hors boss (P4). | GDD |
 | QA4 | ~~Personnage portable ou lié au monde ?~~ Codé : **lié au monde de l'hôte** (sauvegarde serveur seule). À confirmer par la production si un personnage portable est souhaité plus tard. | Production + GDD |
-| QA5 | Reste à planifier : N1 (cumul des critiques), N4 (collision et tir ami sur les pièces), I11 (fiabilité du visuel des zones de feu), I13 / P6 (mort et réapparition), P3 (Gardien et Séraphe), P10 (sauvegarde illisible) | Dev A, Dev B, Dev C |
+| QA5 | Reste à planifier : N1 (cumul des critiques), N4 et V8 (collision des pièces, obélisques et cloches avec la lame), P10 (sauvegarde illisible), V1 (météo et jour/nuit), V7 (dormance des projectiles), V12 (compilation et recette). I11, I13, P3 et P6 sont traités en v1.3. | Dev A, Dev B, Dev C, Dev D, Dev E |
 | QA6 | La riposte ×3 s'applique-t-elle aux boss, et se cumule-t-elle avec le critique ×3 du boss étourdi (N1) ? | GDD, puis référentiel |
 | QA7 | Un joueur peut-il endommager ses propres constructions ou celles d'un coéquipier (N4) ? | GDD |
-| QA8 | Réapparition : où (lit, feu de camp, point de départ), avec quelle pénalité, et qui la porte (`AEMBGameMode`) ? Conditionne `DeathSaveBehavior` (P8) et la réinitialisation du boss après un wipe (P5). | GDD, puis Dev A |
+| QA8 | ~~Réapparition : où, avec quelle pénalité, qui la porte ?~~ **Tranché au référentiel v1.3 § 9 et codé** (point lié ou `PlayerStart`, sac de mort, `AEMBGameMode`). Restent : V5 (quitter en étant mort) et `DeathSaveBehavior` (P8). | GDD |
 | QA9 | Sauvegarde illisible (P10) : refuser de démarrer le monde, ou démarrer avec un avertissement bloquant ? Mettre de côté un fichier non désérialisable avant de l'écraser ? | Production, puis Dev B |
-| QA10 | Gardien et Séraphe (P3) : boss à coder pour la tranche verticale, ou déclencheurs retirés temporairement des données (`G_DraconicForge`, `S_GuardianCore`, `S_SeraphFeathers`) ? | Chef d'équipe + GDD |
-| QA11 | Passifs de survie et compétences actives (P1, P2) : les laisser achetables sans effet, les griser, ou les retirer de `DT_SkillNodes` tant que leurs systèmes n'existent pas ? | GDD |
+| QA10 | ~~Gardien et Séraphe à coder ?~~ **Codés en v1.3** (Colosse d'Ossivaire, Nyxariel). | — |
+| QA11 | `HarvestYield` et compétences actives (P1, P2) : les laisser achetables sans effet, les griser, ou les retirer de `DT_SkillNodes` tant que leurs systèmes n'existent pas ? | GDD |
 | QA12 | Coop publique : un service en ligne (Steam ou EOS) est-il prévu ? Sans lui, l'identifiant des clients repose sur leur nom (P11). | Production |
+| QA13 | Un joueur qui quitte pendant son attente de réapparition doit-il perdre son sac (dépôt au `Logout`) ou garder son inventaire (comportement actuel) ? (V5) | GDD |
+| QA14 | Après un wipe, le boss garde-t-il sa phase (actuel, non sauvegardé) ou repart-il en phase 1 ? Faut-il sauvegarder la phase atteinte pour que rechargement et wipe se comportent pareil ? (V6) | GDD, puis Dev C |
+| QA15 | Une mort par brûlure, faim ou intoxication doit-elle envoyer le sac au dernier point sûr comme la lave et le vide ? (V10) | GDD |
+| QA16 | Qui code le système d'heure et de météo, et faut-il répliquer l'heure dès la tranche verticale (V1) ? | Chef d'équipe |

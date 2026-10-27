@@ -13,12 +13,6 @@
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
-namespace
-{
-	/** Intervalle de recherche du boss tant qu'il n'est pas encore présent dans le monde (s). */
-	constexpr float BossSearchInterval = 0.5f;
-}
-
 AEMBDragonArena::AEMBDragonArena()
 {
 	// Aucun Tick : l'état de l'arène est piloté par le délégué de phase, la lave par un timer.
@@ -77,7 +71,7 @@ void AEMBDragonArena::TryBindToBoss()
 	// Sur un client, le boss répliqué peut arriver après l'arène : on réessaie à faible cadence jusqu'à son apparition.
 	if (!GetWorldTimerManager().IsTimerActive(BossSearchTimerHandle))
 	{
-		GetWorldTimerManager().SetTimer(BossSearchTimerHandle, this, &AEMBDragonArena::TryBindToBoss, BossSearchInterval, true);
+		GetWorldTimerManager().SetTimer(BossSearchTimerHandle, this, &AEMBDragonArena::TryBindToBoss, EMBBossDefaults::ArenaBossSearchInterval, true);
 	}
 }
 
@@ -316,6 +310,7 @@ void AEMBDragonArena::TickLava()
 			LavaHit.HitDirection = FVector::UpVector;
 			LavaHit.bUnblockable = true;
 			LavaHit.bUnparryable = true;
+			LavaHit.bLethalZone = true; // v1.3 : la lave tue au "dernier point sûr" (le sac de mort n'est pas posé dans la lave)
 			LavaHit.bDamageOverTime = true; // v1.1 : dégâts directs, ni esquive, ni counter-hit, ni multicast
 			UEMBCombatComponent::ApplyHitToActor(Pawn, LavaHit);
 			break; // un seul tick par joueur et par intervalle, même sur des zones qui se chevauchent

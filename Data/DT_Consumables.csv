@@ -1,0 +1,10 @@
+---,HungerDelta,ThirstDelta,HealthPercent,CorruptionDelta,IntoxicationChance,IntoxicationDuration,IntoxicationDamagePerSecond,bCuresIntoxication,FireResistanceBonus,FireResistanceDuration,Description
+Berries,10,5,0,0,0,0,0,False,0,0,"Baies sauvages : un en-cas qui calme un peu la faim et la soif."
+RawMeat,10,0,0,0,0.25,20,1,False,0,0,"Viande crue : nourrit peu, et une chance sur quatre d'être intoxiqué (-1 PV/s pendant 20 s)."
+CookedMeat,40,0,0,0,0,0,0,False,0,0,"Viande cuite au feu : un vrai repas."
+Stew,60,10,0,0,0,0,0,False,0,0,"Ragoût mijoté : très nourrissant, et il désaltère un peu."
+BoiledWater,0,40,0,0,0,0,0,False,0,0,"Eau bouillie, sans danger : étanche la soif."
+HealingFlask,0,0,0.4,0,0,0,0,False,0,0,"Fiole de soin : rend 40 % des points de vie maximum."
+Antidote,0,0,0,0,0,0,0,True,0,0,"Antidote : met fin à une intoxication."
+CorruptionTonic,0,0,0,-30,0,0,0,False,0,0,"Tonique d'épuration : réduit la Corruption de 30."
+FireResistOil,0,0,0,0,0,0,0,False,0.25,120,"Huile ignifuge : +25 % de résistance au feu pendant 120 s (ne se cumule pas, un nouvel usage rafraîchit la durée)."

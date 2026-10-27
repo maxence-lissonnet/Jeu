@@ -87,9 +87,20 @@ bool UEMBStatsComponent::HasAuthorityOwner() const
 	return Owner && Owner->HasAuthority();
 }
 
+float UEMBStatsComponent::GetMaxHealth() const
+{
+	return MaxHealth * HealthMaxMultiplier;
+}
+
+float UEMBStatsComponent::GetMaxStamina() const
+{
+	return MaxStamina * StaminaMaxMultiplier;
+}
+
 float UEMBStatsComponent::GetHealthPercent() const
 {
-	return MaxHealth > 0.f ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
+	const float EffectiveMax = GetMaxHealth();
+	return EffectiveMax > 0.f ? FMath::Clamp(Health / EffectiveMax, 0.f, 1.f) : 0.f;
 }
 
 void UEMBStatsComponent::BroadcastAttribute(EEMBStatType Type) const
@@ -97,10 +108,10 @@ void UEMBStatsComponent::BroadcastAttribute(EEMBStatType Type) const
 	switch (Type)
 	{
 	case EEMBStatType::Health:
-		OnAttributeChanged.Broadcast(Type, Health, MaxHealth);
+		OnAttributeChanged.Broadcast(Type, Health, GetMaxHealth());
 		break;
 	case EEMBStatType::Stamina:
-		OnAttributeChanged.Broadcast(Type, Stamina, MaxStamina);
+		OnAttributeChanged.Broadcast(Type, Stamina, GetMaxStamina());
 		break;
 	case EEMBStatType::Poise:
 		OnAttributeChanged.Broadcast(Type, GetPoise(), MaxPoise);
@@ -199,7 +210,7 @@ void UEMBStatsComponent::Heal(float Amount)
 	{
 		return;
 	}
-	Health = FMath::Min(MaxHealth, Health + Amount);
+	Health = FMath::Min(GetMaxHealth(), Health + Amount);
 	BroadcastAttribute(EEMBStatType::Health);
 }
 
@@ -211,8 +222,8 @@ void UEMBStatsComponent::RestoreFromSave(float InHealth, float InStamina)
 	}
 
 	// Valeurs non numériques ou aberrantes (sauvegarde corrompue) : on retombe sur le plein.
-	Health = FMath::IsFinite(InHealth) ? FMath::Clamp(InHealth, 1.f, MaxHealth) : MaxHealth;
-	Stamina = FMath::IsFinite(InStamina) ? FMath::Clamp(InStamina, 0.f, MaxStamina) : MaxStamina;
+	Health = FMath::IsFinite(InHealth) ? FMath::Clamp(InHealth, 1.f, GetMaxHealth()) : GetMaxHealth();
+	Stamina = FMath::IsFinite(InStamina) ? FMath::Clamp(InStamina, 0.f, GetMaxStamina()) : GetMaxStamina();
 	Poise = MaxPoise;
 	SyncReplicatedPoise();
 
@@ -238,8 +249,64 @@ void UEMBStatsComponent::SetMaxHealth(float NewMax, bool bRefill)
 		return;
 	}
 	MaxHealth = FMath::Max(1.f, NewMax);
-	Health = bRefill ? MaxHealth : FMath::Min(Health, MaxHealth);
+	Health = bRefill ? GetMaxHealth() : FMath::Min(Health, GetMaxHealth());
 	BroadcastAttribute(EEMBStatType::Health);
+}
+
+void UEMBStatsComponent::SetSurvivalModifiers(float MaxHealthMultiplier, float MaxStaminaMultiplier, float StaminaRegenMultiplierFromSurvival)
+{
+	if (!HasAuthorityOwner())
+	{
+		return;
+	}
+
+	// Garde-fous : un multiplicateur nul ou négatif rendrait la jauge inutilisable ; on plafonne aussi le haut
+	// pour qu'une valeur aberrante ne crée pas de vie démesurée.
+	const float NewHealthMult = FMath::IsFinite(MaxHealthMultiplier) ? FMath::Clamp(MaxHealthMultiplier, 0.05f, 4.f) : 1.f;
+	const float NewStaminaMult = FMath::IsFinite(MaxStaminaMultiplier) ? FMath::Clamp(MaxStaminaMultiplier, 0.05f, 4.f) : 1.f;
+	const float NewRegenMult = FMath::IsFinite(StaminaRegenMultiplierFromSurvival) ? FMath::Max(0.f, StaminaRegenMultiplierFromSurvival) : 1.f;
+
+	const bool bChanged = !FMath::IsNearlyEqual(NewHealthMult, HealthMaxMultiplier)
+		|| !FMath::IsNearlyEqual(NewStaminaMult, StaminaMaxMultiplier);
+
+	HealthMaxMultiplier = NewHealthMult;
+	StaminaMaxMultiplier = NewStaminaMult;
+	SurvivalStaminaRegenMultiplier = NewRegenMult;
+
+	if (bChanged)
+	{
+		// Les valeurs courantes sont plafonnées au nouveau maximum, jamais relevées (pas de soin gratuit).
+		Health = FMath::Min(Health, GetMaxHealth());
+		Stamina = FMath::Min(Stamina, GetMaxStamina());
+		BroadcastAttribute(EEMBStatType::Health);
+		BroadcastAttribute(EEMBStatType::Stamina);
+		WakeRegeneration(); // Un maximum relevé laisse l'endurance sous son nouveau plafond.
+	}
+}
+
+void UEMBStatsComponent::ReviveWithFraction(float HealthFraction, float StaminaFraction)
+{
+	if (!HasAuthorityOwner() || !IsDead())
+	{
+		return;
+	}
+
+	const float HealthRatio = FMath::IsFinite(HealthFraction) ? FMath::Clamp(HealthFraction, 0.f, 1.f) : 1.f;
+	const float StaminaRatio = FMath::IsFinite(StaminaFraction) ? FMath::Clamp(StaminaFraction, 0.f, 1.f) : 1.f;
+
+	Health = FMath::Max(1.f, GetMaxHealth() * HealthRatio); // Jamais 0 : ce serait rester mort.
+	Stamina = GetMaxStamina() * StaminaRatio;
+	Poise = MaxPoise;
+	SyncReplicatedPoise();
+
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	StaminaRegenResumeTime = Now + StaminaRegenDelay;
+	PoiseRegenResumeTime = Now;
+
+	BroadcastAttribute(EEMBStatType::Health);
+	BroadcastAttribute(EEMBStatType::Stamina);
+	BroadcastAttribute(EEMBStatType::Poise);
+	WakeRegeneration(); // ApplyDamage avait éteint le Tick à la mort.
 }
 
 void UEMBStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -255,12 +322,14 @@ void UEMBStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	const double Now = GetWorld()->GetTimeSeconds();
 	bool bNeedsMoreTicks = false;
 
-	if (Stamina < MaxStamina)
+	const float EffectiveMaxStamina = GetMaxStamina();
+	if (Stamina < EffectiveMaxStamina)
 	{
 		bNeedsMoreTicks = true;
 		if (Now >= StaminaRegenResumeTime)
 		{
-			Stamina = FMath::Min(MaxStamina, Stamina + StaminaRegenRate * StaminaRegenMultiplier * DeltaTime);
+			// Multiplicateurs combinés : garde (x0,35) et survie (faim, chaleur).
+			Stamina = FMath::Min(EffectiveMaxStamina, Stamina + StaminaRegenRate * StaminaRegenMultiplier * SurvivalStaminaRegenMultiplier * DeltaTime);
 			BroadcastAttribute(EEMBStatType::Stamina);
 		}
 	}
@@ -296,6 +365,10 @@ void UEMBStatsComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	DOREPLIFETIME(UEMBStatsComponent, MaxHealth);
 
+	// Multiplicateurs de survie : la vie max se voit de tous (barre de groupe), l'endurance max du propriétaire seul.
+	DOREPLIFETIME(UEMBStatsComponent, HealthMaxMultiplier);
+	DOREPLIFETIME_CONDITION(UEMBStatsComponent, StaminaMaxMultiplier, COND_OwnerOnly);
+
 	// Maxima d'endurance et de poise fixés par les valeurs par défaut : envoyés une seule fois.
 	DOREPLIFETIME_CONDITION(UEMBStatsComponent, MaxStamina, COND_InitialOnly);
 	DOREPLIFETIME_CONDITION(UEMBStatsComponent, MaxPoise, COND_InitialOnly);
@@ -319,4 +392,10 @@ void UEMBStatsComponent::OnRep_Poise(float OldValue)
 void UEMBStatsComponent::OnRep_MaxHealth(float OldValue)
 {
 	BroadcastAttribute(EEMBStatType::Health);
+}
+
+void UEMBStatsComponent::OnRep_MaxMultipliers()
+{
+	BroadcastAttribute(EEMBStatType::Health);
+	BroadcastAttribute(EEMBStatType::Stamina);
 }

@@ -194,6 +194,7 @@ Charge de poids (i-frames de roulade, montages différents) : léger < 30 % → 
 | Coup critique (riposte sur boss étourdi, ou premier coup sur l'attaquant paré pendant la fenêtre de riposte) | ×3,0 |
 | Canal de trace de mêlée | `EMBMeleeHit` = `ECC_GameTraceChannel1` (ignore par défaut ; Physics Assets et pawns en Overlap ; décor en Block ; capsules ignorées) |
 | Canal de placement | `EMBBuilding` = `ECC_GameTraceChannel2` (pièces Block ; volumes de zone interdite Overlap) |
+| Canal des projectiles (v1.3) | `EMBProjectile` = `ECC_GameTraceChannel3` (objet ; Block par défaut pour que pawns et décor acceptent le projectile ; le projectile règle Block WorldStatic, Overlap Pawn, Ignore WorldDynamic et lui-même) |
 | Charge (poids porté, ressources seules en v1) | maximum 300 ; poids unitaires : Wood 0,5 · Stone 1 · Fiber 0,1 · Flint 0,5 · IronOre 2 · IronIngot 1 · BlackSteelIngot 1 · Obsidian 1,5 · MoonSilver 1 · DragonScale 2 · DragonBone 3 · EmberHeart 5 |
 
 ---
@@ -376,7 +377,9 @@ UEMBStatsComponent::RestoreFromSave(float Health, float Stamina);               
 
 | Constante | Valeur |
 |---|---|
-| `SaveFormatVersion` | 1 (incrémenté à chaque changement de format ; migration par étapes N → N+1) |
+| `SaveFormatVersion` | **2** depuis la v1.3 (1 = v1.2) ; incrémenté à chaque changement de format ; migration par étapes N → N+1 ; résultat `Ok` / `TooRecent` (bloque les écritures) / `Invalid` (fichier ignoré sans bloquer) |
+| Ajouts v2 | joueur : survie (`FEMBSurvivalSaveData`, importée seulement si `bHasSurvivalState`), `BoundRespawnPieceSaveId` ; monde : sacs de mort (propriétaire stable, transform, contenu) ; boss : itération sur `AEMBBossBase` |
+| Piège de sérialisation | une valeur égale au défaut n'est pas écrite : les champs sauvegardés ont des défauts neutres (0) et non des constantes d'équilibrage |
 | Slots | 3 mondes `EMB_World_0` à `EMB_World_2` ; chaque monde écrit en alternance `_A` / `_B` et charge le plus récent valide (une écriture interrompue ne détruit jamais la précédente) |
 | Autosave | toutes les 300 s (serveur), à la mort d'un boss, à la déconnexion d'un joueur ; jamais pendant une rencontre de boss active (reportée à la fin) |
 | Écriture | `UGameplayStatics::AsyncSaveGameToSlot` ; une seule écriture en vol (une demande pendant l'écriture est mise en attente) |
@@ -397,3 +400,158 @@ Contenu :
 - **Par joueur** (`FEMBPlayerSaveData`, clé = identifiant stable) : progression, inventaire, PV, endurance, transform du pawn, dernier point sûr.
 - **Monde** (`FEMBWorldSaveData`) : événements monde acquis (`Event.Boss.Killed.*` : un boss vaincu ne réapparaît pas).
 - **Constructions** (`FEMBPieceSaveData`) : identifiant de sauvegarde, ligne `DT_BuildPieces`, classe (soft path), transform, PV, matériau, ancrage, identifiant stable du poseur, liens de support (identifiants des voisins, utilisés pour contrôle). Chargement en masse (`BeginBulkLoad` / `EndBulkLoad` du subsystem de structure : ni effondrement ni recalcul pendant l'enregistrement), puis un recalcul global de l'intégrité ; les pièces à intégrité ≤ 0 sont détruites **sans effet ni vagues** au chargement (rien de spectaculaire à l'arrivée des joueurs).
+
+---
+
+## 9. Mort, réapparition, sac, réanimation (v1.3)
+
+### 9.1 Attribution v1.3 (un propriétaire par fichier ; le dépôt git sert de sauvegarde, plus de `.bak`)
+| Propriétaire | Fichiers |
+|---|---|
+| Dev A — mort / réanimation / interaction | `EMBInteractable.h` (nouveau), `EMBPlayerCharacter.*`, `EMBCombatComponent.*`, `EMBCombatTypes.h`, `EMBStatsComponent.*`, `EMBGameMode.*`, `EMBGameplayTags.*`, `Config/DefaultEngine.ini` |
+| Dev B — sac / points de réapparition / sauvegarde v2 | `EMBDeathBag.*` (nouveau), `EMBRespawnSubsystem.*` (nouveau), `EMBBuildablePiece.*`, `EMBBuildingTypes.h`, `EMBBuildingComponent.*`, `EMBInventoryComponent.*`, `EMBStructureSubsystem.*`, `EMBSaveTypes.h`, `EMBSaveGame.*`, `EMBSaveSubsystem.*`, `Data/DT_BuildPieces.csv`, `Config/DefaultGame.ini` (sections de ses classes) |
+| Dev D — survie | `EMBSurvivalTypes.h`, `EMBSurvivalComponent.*`, `EMBEnvironmentSubsystem.*`, `EMBEnvironmentVolume.*` (nouveaux), `Data/DT_Consumables.csv` |
+| Dev C — boss | `EMBBossBase.*`, `EMBBossTags.*`, `EMBColossusBoss.*`, `EMBColossusArena.*` (nouveaux), fichiers dragon et BT existants, `Data/DT_ColossusAttacks.csv` |
+| Dev E — boss 2 | `EMBSeraphBoss.*`, `EMBSeraphArena.*`, `EMBProjectile.*`, tâches BT propres au Séraphe (nouveaux), `Data/DT_SeraphAttacks.csv` |
+| Dev A (progression, inchangé) | `EMBProgression*`, `EMBPlayerState.*`, `EMBDiscoveryVolume.*` |
+
+### 9.2 Constantes
+| Constante | Valeur |
+|---|---|
+| Délai minimal avant de pouvoir demander la réapparition | 3,0 s après la mort, en solo **et en coop** (arbitrage v1.3 ; option `bRespawnRequiresNoLivingAlly` pour imposer l'attente de 30 s en coop) |
+| Réapparition automatique | 30,0 s après la mort (fenêtre de réanimation en coop) |
+| Valeurs après réanimation | Corruption plafonnée à 60, intoxication purgée (sinon un joueur mort de Corruption 100 re-mourrait) |
+| Lit « Dormir » | Corruption −50 au plus une fois toutes les 120 s par joueur ; la liaison reste instantanée |
+| Mort dans la lave (coup `bLethalZone`) ou chute hors du monde | sac déposé au dernier point sûr connu ; toute autre mort (faim, froid, brûlure…) laisse le sac sur place |
+| Réanimation après une mort de faim ou de soif | faim et soif remontées à au moins 30 |
+| Points de réapparition pré-placés dans le niveau | utilisables mais non sauvegardés (seules les pièces posées par un joueur ont un `SaveId`) |
+| Réanimation par un allié | maintenir *Interagir* 4,0 s à ≤ 250 cm du joueur mort (annulée si l'allié s'éloigne, meurt ou est étourdi) ; le joueur revient à **30 % des PV**, 50 % d'endurance, sans perdre son inventaire, avec 3,0 s d'invulnérabilité |
+| Sac (`AEMBDeathBag`) | déposé au moment de la **réapparition** (pas si réanimé) ; contient **toutes les ressources** de l'inventaire ; l'XP et la progression ne sont jamais perdues ; un seul sac actif par joueur : mourir avant de le récupérer détruit l'ancien sac et son contenu ; seul son propriétaire peut le ramasser (interaction) ; position = lieu de la mort, ou dernier point sûr si la mort a lieu hors sol (chute, lave, vide) ; sauvegardé |
+| Point de réapparition | pièce construite dont la ligne `DT_BuildPieces` a `bIsRespawnPoint = True` (lit, feu de camp) ; le joueur s'y **lie** par interaction (le dernier lien remplace le précédent) ; sauvegardé par `SaveId` de pièce ; pièce détruite → lien perdu → `PlayerStart` |
+| Position de réapparition | point lié valide (décalé de 150 cm devant la pièce, sur le sol) → sinon `PlayerStart` |
+| Valeurs à la réapparition | PV et endurance pleins, poise pleine, faim 60, soif 60, Corruption 0, température corporelle neutre |
+| Invulnérabilité de réapparition | 3,0 s (tag `State.Combat.Invulnerable`), annulée dès que le joueur attaque |
+| Mort par Corruption 100 | mort normale (l'ennemi « Possédé » du GDD n'est pas codé) |
+| Sauvegarde d'un joueur mort | `RespawnAtSafePoint` (défaut, à valider) : enregistré vivant, PV pleins, au point lié s'il est valide, sinon au dernier point sûr ; aucun sac n'est créé par la sauvegarde |
+
+### 9.3 Signatures figées
+```cpp
+// EMBInteractable.h (Dev A) — interface native
+UINTERFACE(MinimalAPI, meta=(CannotImplementInterfaceInBlueprint)) class UEMBInteractable : public UInterface { GENERATED_BODY() };
+class EMBERFALL_API IEMBInteractable { GENERATED_BODY() public:
+    virtual bool CanInteract(const APawn* Instigator) const = 0;          // serveur et client (pour l'invite d'interface)
+    virtual void Interact(APawn* Instigator) = 0;                          // serveur uniquement
+    virtual FText GetInteractionText(const APawn* Instigator) const = 0;  // « Ramasser le sac », « Se lier au lit »…
+    virtual float GetInteractionHoldTime() const { return 0.f; }           // 4,0 pour la réanimation
+};
+// AEMBPlayerCharacter (Dev A) : Interact (input) -> trace/overlap 250 cm -> Server_Interact(AActor* Target) ; implémente IEMBInteractable (réanimation)
+void RequestRespawn();                                     // client -> serveur, refusé avant 3,0 s
+bool IsDeadAwaitingRespawn() const;
+// UEMBStatsComponent (Dev A) : ajouts
+void ReviveWithFraction(float HealthFraction, float StaminaFraction);   // serveur ; sort de l'état mort
+void SetSurvivalModifiers(float MaxHealthMultiplier, float MaxStaminaMultiplier, float StaminaRegenMultiplier); // serveur ; poussé par la survie
+// UEMBCombatComponent (Dev A) : ajouts
+void ResetFromDeath();                                     // serveur ; Dead -> Idle
+void GrantSpawnProtection(float Seconds);                  // serveur ; annulée à la première attaque
+void SetExtraFireResistance(float Bonus);                  // serveur ; additionnée au passif FireResistance (plafond 0,9)
+// FEMBHitData (Dev A) : ajout `float CorruptionAmount = 0.f;` (Corruption ajoutée à la cible, indépendante du type de dégâts)
+// AEMBGameMode (Dev A) : void RespawnPlayer(AController* Controller);   // serveur : DropDeathBag, détruit l'ancien pawn, RestartPlayerAtTransform
+
+// UEMBRespawnSubsystem : UWorldSubsystem (Dev B, serveur)
+void BindRespawnPoint(APlayerState* Player, AEMBBuildablePiece* Piece);
+bool GetRespawnTransform(AController* Controller, FTransform& OutTransform) const;   // false -> PlayerStart
+void DropDeathBag(AController* Controller, const FVector& DeathLocation);            // vide l'inventaire du pawn mort dans un sac
+// AEMBDeathBag (Dev B) : acteur répliqué, IEMBInteractable, propriétaire = identifiant stable
+// AEMBBuildablePiece (Dev B) : IEMBInteractable si la ligne a bIsRespawnPoint (« Se lier ») ; le lit (« Dormir ») réduit aussi la Corruption de 50 si abrité (trace vers le haut touchant une pièce)
+```
+
+## 10. Survie (v1.3)
+
+### 10.1 Arbitrage
+Composant dédié `UEMBSurvivalComponent` sur le personnage (pas dans `UEMBStatsComponent`, déjà chargé) ; il **pousse** ses effets vers les stats et le combat par les setters du §9.3. Environnement : `UEMBEnvironmentSubsystem : UWorldSubsystem` (température ambiante, nuit, taux de Corruption, sources de chaleur et purificateurs), alimenté par des `AEMBEnvironmentVolume` (biomes) et par des setters/délégués qu'un futur système météo et jour/nuit appellera ; **aucun système météo n'est codé**.
+
+### 10.2 Constantes (GDD §4.4)
+| Jauge | Plage / départ | Évolution | Effets |
+|---|---|---|---|
+| Faim | 0-100, départ 100 | −1,6/min réelle ; ×1,5 si température ressentie < 5 °C ; × multiplicateur passif `HungerThirstRate` | < 25 : régénération d'endurance ×0,7 ; 0 : −1 PV/s |
+| Soif | 0-100, départ 100 | −2,5/min ; ×2 si ressentie > 35 °C ; × `HungerThirstRate` | < 25 : endurance max ×0,8 ; 0 : −2 PV/s |
+| Température ressentie | °C | ambiante (biome + nuit −8 °C + météo) + isolation (0 en v1, setter prévu pour l'équipement) + chaleur des feux (+15 °C dans 6 m, non cumulable) ; lissée vers la cible à 1 °C/s | confort 10-28 °C élargi de `ComfortRange` des deux côtés ; < 5 : faim ×1,5 ; < −10 : −1 PV/s ; > 35 : soif ×2 et régénération d'endurance ×0,8 ; > 45 : −1 PV/s |
+| Corruption | 0-100, départ 0 | +taux de zone (brume corrompue 0,5/s) ×2 la nuit ; coup reçu : `CorruptionAmount`, sinon dégâts de type Corruption → `clamp(0,2 × dégâts, 2, 20)` ; × `CorruptionGain` ; purificateur −1/s dans 8 m | ≥ 25 : tag `State.Survival.Whispers` (son) ; ≥ 50 : PV max ×0,85 ; ≥ 75 : PV max ×0,70 ; 100 : mort |
+| Résistance au feu | 0-0,9 | passif `FireResistance` + bonus temporaires (huile) | dégâts de feu × (1 − résistance) |
+
+Tick du composant : 1 Hz côté serveur (jauges lentes) ; dégâts de survie appliqués en `bDamageOverTime`. Réplication : jauges en `COND_OwnerOnly` (Corruption aussi à tous si ≥ 50 pour les effets visuels).
+Régénérations multiplicatives : les malus se multiplient entre eux (faim < 25 et chaleur > 35 → ×0,7 × 0,8).
+
+### 10.3 Consommables (`Data/DT_Consumables.csv`, ressources de l'inventaire)
+| Id | Effet | Poids |
+|---|---|---|
+| `Berries` | faim +10, soif +5 | 0,1 |
+| `RawMeat` | faim +10 ; 25 % de chance d'intoxication : −1 PV/s pendant 20 s | 0,5 |
+| `CookedMeat` | faim +40 | 0,5 |
+| `Stew` | faim +60, soif +10 | 0,8 |
+| `BoiledWater` | soif +40 | 0,5 |
+| `HealingFlask` | PV +40 % du maximum | 0,3 |
+| `Antidote` | annule l'intoxication | 0,2 |
+| `CorruptionTonic` | Corruption −30 | 0,3 |
+| `FireResistOil` | résistance au feu +0,25 pendant 120 s (non cumulable, rafraîchit) | 0,3 |
+Délai entre deux consommations : 1,0 s. Consommation : `Server_Consume(FName)` (Reliable, validé, plafond 5/s).
+
+### 10.4 Signatures figées
+```cpp
+// UEMBSurvivalComponent (Dev D)
+float GetHunger() const; float GetThirst() const; float GetCorruption() const; float GetFeltTemperature() const;
+void RequestConsume(FName ConsumableId);                    // client -> Server_Consume
+void AddCorruption(float Amount);  void ReduceCorruption(float Amount);   // serveur
+void ApplyRespawnValues();                                   // serveur : §9.2
+void SetPassiveModifiers(const FEMBPassiveModifiers& Mods);  // poussé par la progression (HungerThirstRate, ComfortRange, CorruptionGain, FireResistance)
+void SetInsulation(float DegreesC);                          // pour l'équipement futur
+void ExportSaveData(FEMBSurvivalSaveData& Out) const; void ImportSaveData(const FEMBSurvivalSaveData& In);
+// FEMBSurvivalSaveData (EMBSurvivalTypes.h, champs SaveGame) : Hunger, Thirst, Corruption, FeltTemperature, FireOilRemaining, IntoxicationRemaining
+// UEMBEnvironmentSubsystem (Dev D)
+float GetAmbientTemperatureAt(const FVector& Location) const; float GetCorruptionRateAt(const FVector& Location) const; bool IsNight() const;
+float GetHeatBonusAt(const FVector& Location) const; float GetPurificationRateAt(const FVector& Location) const;
+void SetTimeOfDay(float Hours);  void SetWeatherTemperatureOffset(float DeltaC);   // appelés par un futur système météo / jour-nuit
+void RegisterHeatSource(AActor* Source, float Radius, float BonusC);  void UnregisterHeatSource(AActor* Source);
+void RegisterPurifier(AActor* Source, float Radius, float RatePerSecond);  void UnregisterPurifier(AActor* Source);
+// délégué OnEnvironmentChanged()
+```
+`AEMBProgressionComponent::ApplyModifiersToPawn` pousse aussi vers `UEMBSurvivalComponent::SetPassiveModifiers` (Dev A). `FEMBBuildPieceRow` reçoit en fin : `bool bIsRespawnPoint`, `float HeatRadius`, `float HeatBonus`, `float PurifyRadius`, `float PurifyRate` (feu de camp : respawn, 600 cm, +15 °C ; forge : 400 cm, +10 °C ; lit : respawn ; nouvelle ligne `PurifyingBrazier` : 800 cm, 1,0/s, `RequiredGlyph = G_PurifyingBrazier`, coût 20 Stone + 5 IronIngot + 2 MoonSilver).
+
+## 11. Boss 1 et 2 (v1.3)
+
+### 11.1 Base commune
+`AEMBBossBase : ACharacter, IEMBHitReceiver` (Dev C) factorise : stats et posture, mise à l'échelle coop, phases par seuils de PV avec invulnérabilité de transition, enragé optionnel, points faibles par os, attaques chronométrées (`BeginTimedAttack`), recharges, historique anti-répétition, dégâts de zone/cône, rencontre (`IsEncounterActive`), défaite (`GetDefeatedEventTag`, XP depuis `UEMBProgressionSettings`, `NotifyWorldEvent`, `ApplyDefeatedFromSave`). `AEMBDragonBoss` en hérite sans changer son comportement ni ses valeurs. `UBTTask_EMBSelectAttack`, le service et le décorateur de phase travaillent sur `AEMBBossBase`. La sauvegarde itère sur `AEMBBossBase`.
+
+**Rencontre** (v1.3 après revue) : `ArenaRadius` par boss (dragon 6 000 cm, Colosse 3 000, Nyxariel 4 000). `IsEncounterActive` = rencontre engagée, boss vivant et au moins un joueur vivant dans `ArenaRadius`. Après **30 s sans joueur vivant dans l'arène**, la rencontre est abandonnée : PV remis au maximum, attaques et étourdissement interrompus, **phase conservée** (l'arène est irréversible), échelle coop recalculée à la rencontre suivante. La sauvegarde reportée pendant une rencontre est forcée au-delà de 300 s de report. Constante partagée `EMBBossDefaults::ArenaBossSearchInterval`.
+
+### 11.2 Colosse d'Ossivaire (`AEMBColossusBoss`)
+PV 12 000 ; posture 600, régénération 25/s après 3 s, étourdi 4 s ; résistances physique 10 %, feu 40 %, foudre −20 %, corruption 0 % ; point faible `core` dans le dos ×1,5, **exposé 3 s après le Séisme** (sinon ×1,0) ; P2 à 50 % (invulnérable 4 s, télégraphes ×0,9) ; marche 350 cm/s ; XP `GuardianXP`, tag `Event.Boss.Killed.Guardian`.
+
+| Attaque (`Attack.Guardian.*`) | Phases | Portée | Angle | Télégraphe | Esquive | Dégâts / poise | Garde / parade | Poids | Recharge |
+|---|---|---|---|---|---|---|---|---|---|
+| HammerFist | 1-2 | 0-700 | ±45° | 1,0 | 0,90-1,15 | 180 / 50 | blocable / non parable | 30 | 3 |
+| ArmSweep | 1-2 | 0-900 | ±90° | 0,8 | 0,70-0,95 | 140 / 40 | blocable | 25 | 4 |
+| LionBite | 1-2 | 0-500 | ±30° | 0,6 | 0,55-0,75 | 120 / 30 | **parable** | 25 | 3 |
+| SerpentLash | 1-2 | 0-1 000 | arrière > 110° | 0,7 | 0,60-0,85 | 160 / 60 | blocable | 35 | 5 |
+| RamCharge | 1-2 | 800-2 500 | ±20° | 1,4 | 1,30-1,60 (latéral) | 220 / 90 | imblocable | 20 | 10 ; percute un obélisque ou un mur → étourdi 3 s |
+| Quake | 1-2 | 0-800 | 360° | 1,8 | 1,75-2,00 (onde rayon 800) | 200 / 80 | imblocable | 15 | 12 ; noyau exposé 3 s |
+| RuneWaves | 2 | 0-2 500 | 360° | 1,0 | 3 anneaux à 0,8 s d'intervalle, 1 000 cm/s, épaisseur 150 | 90 chacun | imblocable | 20 | 14 |
+| LionRoar | 2 | 0-1 200 | ±30° | 0,5 | sortir du cône | 0 / 80 | — | 15 | 12 ; enchaîne HammerFist |
+| Resonance | 2 | — | — | canalisation 3,0 s | interrompue par ≥ 150 de posture | soin 3 % PV max par obélisque intact | — | 10 (0 si aucun obélisque) | 25 |
+Arène `AEMBColossusArena` : 4 obélisques de 500 PV (endommageables par les joueurs), allumés en P2.
+
+### 11.3 Nyxariel, l'Aile Flétrie (`AEMBSeraphBoss`)
+PV 24 000 ; posture 700, régénération 50/s après 2,5 s, étourdi 3 s ; résistances physique 0 %, feu −25 %, corruption 60 % ; P2 à 60 %, P3 à 25 % (au sol, vitesse ×1,2) ; transitions invulnérables 3 s ; vol 1 800 cm/s ; XP `SeraphXP`, tag `Event.Boss.Killed.Seraph`.
+
+| Attaque (`Attack.Seraph.*`) | Phases | Portée | Télégraphe | Esquive | Dégâts / poise | Parade | Poids | Recharge |
+|---|---|---|---|---|---|---|---|---|
+| Thrust | 1-3 | 600-1 800 (±20°) | 0,5 | 0,45-0,60 (dash 1 800 cm en 0,25 s) | 160 / 50 | **Oui** | 30 | 3 |
+| Feint | 1-3 | 600-1 800 | 1,0 + délai aléatoire 0,3-0,9 | au flash de la pointe | 160 / 50 | Oui | 15 | 6 |
+| WingScissors | 1-3 | 0-500 (±60°) | 0,4 | coups à 0,40 et 0,75 | 120 ×2 / 30 | Non | 25 | 4 |
+| FeatherRain | 1-2 | 500-3 000 (±40°) | 0,9 | 24 projectiles à 3 000 cm/s | 25 + 5 Corruption chacun | Non | 15 | 10 |
+| LanceThrow | 1-3 | 1 000-4 000 (±15°) | 0,7 | projectile 4 000 cm/s | 200 / 60 | parade parfaite = renvoi, 300 dégâts au boss | 20 | 8 |
+| SpiralDive | 1-2 | 800-4 000 | 1,2 (ombre) | flash 0,35 s avant impact, rayon 400 | 200 / 70 | Non | 15 | 12 |
+| TwinShadows | 2 | — | 1,5 | 2 clones (1 coup les dissipe, 20 s), attaques répétées avec 0,3 s de retard à 30 % des dégâts | — | — | 10 | 30 |
+| BlackHalo | 2-3 | 0-600 | 1,5 | sphère rayon 600 | 250 + 20 Corruption | Non | 15 | 15 |
+| DeadStarFall | 3 | tout | 0,8 avant chaque plongeon | 3 plongeons espacés de 0,9 s, rayon 400 | 220 / 80 chacun | Non | 20 | 20 ; **vulnérable 4 s** ensuite |
+Arène `AEMBSeraphArena` : 3 cloches ; frapper une cloche quand Nyxariel vole l'étourdit 2 s (une fois par cloche).

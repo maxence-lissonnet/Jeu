@@ -14,8 +14,9 @@
  *  - facteur distance : 1 au centre de la plage [MinRange, MaxRange], décroît linéairement vers les bords, 0 hors plage ;
  *  - facteur angle    : 1 face à la cible, décroît vers le bord du cône frontal, 0 hors cône (1 pour les attaques 360 degrés) ;
  *  - pénalité         : dernière attaque x0,25 ; avant-dernière x0,6 ;
- *  - WingBuffet x3 si au moins 2 joueurs sont à moins de 800 cm ;
- *  - exclues : attaques en recharge, attaques scriptées (Cataclysm), attaques interdites dans la phase courante.
+ *  - modificateur propre au boss (AEMBBossBase::GetAttackWeightModifier) : dragon, WingBuffet x3 si au moins 2 joueurs à moins de 800 cm ;
+ *  - exclues : attaques en recharge, attaques scriptées (Cataclysm), interdites dans la phase courante, ou refusées par AEMBBossBase::IsAttackAllowed ;
+ *  - le boss ne doit pas être en chute (IsFalling) : sinon la tâche échoue.
  *
  * Le tirage est un tirage aléatoire pondéré (FRandomStream). La tâche écrit SelectedAttackTag (Name),
  * SelectedAttackKind (Int) et SelectedAttackDuration (Float) dans le Blackboard. Les attaques de mêlée, de zone et de

@@ -8,6 +8,7 @@
 #include "EMBBuildingTypes.h"
 #include "EMBInventoryComponent.h"
 #include "EMBProgressionTypes.h"
+#include "EMBSurvivalTypes.h"
 #include "EMBSaveTypes.generated.h"
 
 /**
@@ -90,6 +91,21 @@ struct EMBERFALL_API FEMBPlayerSaveData
 	UPROPERTY(SaveGame)
 	bool bHasPawnState = false;
 
+	/** (v2) Jauges de survie (faim, soif, Corruption...). Valable seulement si bHasSurvivalState. */
+	UPROPERTY(SaveGame)
+	FEMBSurvivalSaveData Survival;
+
+	/** (v2) Faux pour une sauvegarde v1 migrée : le joueur démarre avec les valeurs de survie par défaut. */
+	UPROPERTY(SaveGame)
+	bool bHasSurvivalState = false;
+
+	/**
+	 * (v2) SaveId (dans CE fichier) de la pièce à laquelle le joueur est lié comme point de réapparition, INDEX_NONE
+	 * si aucune. Les SaveId sont renumérotés à chaque sauvegarde : la valeur n'a de sens que dans le fichier qui la contient.
+	 */
+	UPROPERTY(SaveGame)
+	int32 BoundRespawnPieceSaveId = INDEX_NONE;
+
 	UPROPERTY(SaveGame)
 	TArray<FEMBResourceEntry> Resources;
 
@@ -114,6 +130,23 @@ struct EMBERFALL_API FEMBPlayerSaveData
 	FTransform LastSafeTransform = FTransform::Identity;
 };
 
+/** (v2) Un sac de mort sauvegardé. */
+USTRUCT(BlueprintType)
+struct EMBERFALL_API FEMBDeathBagSaveData
+{
+	GENERATED_BODY()
+
+	/** Identifiant stable du propriétaire. Seul lui peut ramasser le sac. */
+	UPROPERTY(SaveGame)
+	FString OwnerStableId;
+
+	UPROPERTY(SaveGame)
+	FTransform Transform = FTransform::Identity;
+
+	UPROPERTY(SaveGame)
+	TArray<FEMBResourceEntry> Contents;
+};
+
 /** État du monde (hors constructions et joueurs). */
 USTRUCT(BlueprintType)
 struct EMBERFALL_API FEMBWorldSaveData
@@ -127,4 +160,8 @@ struct EMBERFALL_API FEMBWorldSaveData
 	 */
 	UPROPERTY(SaveGame)
 	FGameplayTagContainer WorldEvents;
+
+	/** (v2) Sacs de mort non encore ramassés (un par joueur au plus). */
+	UPROPERTY(SaveGame)
+	TArray<FEMBDeathBagSaveData> DeathBags;
 };

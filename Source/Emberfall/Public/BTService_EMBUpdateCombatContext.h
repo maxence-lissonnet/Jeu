@@ -18,7 +18,7 @@
  *  - la déviation aléatoire (+/- 0,05 s) évite que plusieurs boss ou services s'alignent sur la même frame ;
  *  - la désignation de cible évalue au plus 4 joueurs : coût négligeable à cette cadence.
  * Les états critiques (étourdi, transition, mort) ne passent pas par ce service : le boss les pousse
- * immédiatement dans le Blackboard (AEMBDragonAIController::SyncBlackboardState).
+ * immédiatement dans le Blackboard (AEMBBossAIController::SyncBlackboardState).
  *
  * Choix de la cible : le joueur le plus "menaçant" = le plus proche, pondéré par les dégâts récemment infligés au
  * boss (menace à décroissance exponentielle). La cible courante bénéficie d'un bonus d'hystérésis pour éviter les
@@ -37,7 +37,7 @@ public:
 protected:
 	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 
-	/** Portée maximale de désignation d'une cible (cm). Défaut : rayon de perception du dragon. */
+	/** Portée maximale de désignation d'une cible (cm). Défaut : rayon de perception du boss. */
 	UPROPERTY(EditAnywhere, Category = "Contexte", meta = (ClampMin = "100.0"))
 	float MaxTargetDistance = 8000.f;
 

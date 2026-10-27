@@ -7,6 +7,17 @@
 #include "EMBSaveTypes.h"
 #include "EMBSaveGame.generated.h"
 
+/** Résultat de la mise à niveau d'un fichier de sauvegarde. */
+enum class EEMBMigrationResult : uint8
+{
+	/** Fichier à la version courante (migré si nécessaire) : utilisable. */
+	Ok,
+	/** Fichier plus récent que ce binaire : illisible ici mais PRÉCIEUX, aucune écriture ne doit le détruire. */
+	TooRecent,
+	/** Version < 1 ou migration impossible : fichier inutilisable, ignoré sans bloquer les écritures. */
+	Invalid
+};
+
 /**
  * Contenu d'un slot de sauvegarde (un fichier = _A ou _B d'un monde).
  *
@@ -20,8 +31,11 @@ class EMBERFALL_API UEMBSaveGame : public USaveGame
 	GENERATED_BODY()
 
 public:
-	/** Version du format actuellement écrite (référentiel : 1). */
-	static constexpr int32 CurrentFormatVersion = 1;
+	/**
+	 * Version du format actuellement écrite. Historique : 1 = format initial ; 2 = survie par joueur, liaison de
+	 * réapparition, sacs de mort (migration 1 -> 2 : champs ajoutés, valeurs par défaut).
+	 */
+	static constexpr int32 CurrentFormatVersion = 2;
 
 	/**
 	 * Version du format du fichier. Valeur par défaut VOLONTAIREMENT 0 (invalide), renseignée explicitement à l'écriture.
@@ -72,10 +86,10 @@ public:
 
 	/**
 	 * Amène la sauvegarde à CurrentFormatVersion par étapes successives N -> N+1.
-	 * @return false si la sauvegarde est plus récente que ce binaire (version inconnue) ou si une étape échoue : elle
-	 *         ne doit alors pas être utilisée.
+	 * @return Ok si utilisable ; TooRecent si la sauvegarde vient d'un binaire plus récent (à protéger : bloquer les
+	 *         écritures) ; Invalid si la version est inférieure à 1 ou si une étape échoue (à ignorer simplement).
 	 */
-	bool MigrateToCurrent();
+	EEMBMigrationResult MigrateToCurrent();
 
 	/** Vrai si cette sauvegarde est plus récente que l'autre (horodatage ; à égalité, version de format supérieure). */
 	bool IsNewerThan(const UEMBSaveGame* Other) const;

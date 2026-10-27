@@ -22,6 +22,14 @@ class EMBERFALL_API AEMBGameMode : public AGameModeBase
 public:
 	AEMBGameMode();
 
+	/**
+	 * Serveur. Réapparition d'un joueur mort : dépose le sac de mort (inventaire du pawn mort), choisit le point
+	 * (point lié valide, sinon PlayerStart), détruit l'ancien pawn, en crée un nouveau à cet endroit, puis lui
+	 * applique les valeurs de réapparition (survie) et 3 s d'invulnérabilité. La progression est réappliquée par
+	 * PossessedBy. Sans effet hors serveur ou sans contrôleur.
+	 */
+	void RespawnPlayer(AController* Controller);
+
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void StartPlay() override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;

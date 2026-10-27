@@ -22,6 +22,12 @@ namespace EMBTags
 	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Combat_HyperArmor);
 	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Dead);
 
+	// --- États de joueur et de survie (v1.3) ---
+	/** Corruption >= 25 : chuchotements (posé par la survie). */
+	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Survival_Whispers);
+	/** Joueur mort qui attend sa réapparition ou une réanimation (posé par AEMBPlayerCharacter). */
+	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Player_DeadAwaitingRespawn);
+
 	// --- Attaques du joueur ---
 	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Attack_Player_Light);
 	EMBERFALL_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Attack_Player_Heavy);

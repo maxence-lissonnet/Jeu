@@ -14,6 +14,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
+#include "Misc/GuardValue.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
@@ -133,6 +134,7 @@ void UEMBCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (const UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(BufferExpiryTimer);
+		World->GetTimerManager().ClearTimer(SpawnProtectionTimer);
 	}
 
 	if (Stats)
@@ -150,6 +152,7 @@ void UEMBCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 
 	DOREPLIFETIME(UEMBCombatComponent, CurrentState);
 	DOREPLIFETIME(UEMBCombatComponent, ComboIndex);
+	DOREPLIFETIME(UEMBCombatComponent, bSpawnProtected); // Visible des clients : halo d'invulnérabilité de réapparition.
 }
 
 void UEMBCombatComponent::ResolveDefaultTags()
@@ -210,7 +213,65 @@ void UEMBCombatComponent::SetEncumbranceRatio(float NewRatio)
 
 bool UEMBCombatComponent::IsInvulnerable() const
 {
-	return InvulnerableCount > 0;
+	return InvulnerableCount > 0 || bSpawnProtected;
+}
+
+float UEMBCombatComponent::GetFireResistance() const
+{
+	// Passif "Communion draconique" + bonus temporaires (huile), plafonnés à 0,9.
+	return FMath::Clamp(PassiveModifiers.FireResistance + ExtraFireResistance, 0.f, EMBCombatDefaults::MaxFireResistance);
+}
+
+void UEMBCombatComponent::SetExtraFireResistance(float Bonus)
+{
+	ExtraFireResistance = FMath::IsFinite(Bonus) ? FMath::Max(0.f, Bonus) : 0.f;
+}
+
+void UEMBCombatComponent::GrantSpawnProtection(float Seconds)
+{
+	if (!HasAuthorityOwner() || !GetWorld() || Seconds <= 0.f)
+	{
+		return;
+	}
+
+	// Minuteur dédié (et non ActionTimers, vidés à chaque nouvelle action) : l'invulnérabilité survit aux
+	// changements d'état, mais pas à la première attaque (CancelSpawnProtection dans BeginAttackAction).
+	bSpawnProtected = true;
+	GetWorld()->GetTimerManager().SetTimer(
+		SpawnProtectionTimer,
+		FTimerDelegate::CreateWeakLambda(this, [this]() { bSpawnProtected = false; }),
+		Seconds, false);
+}
+
+void UEMBCombatComponent::CancelSpawnProtection()
+{
+	if (bSpawnProtected)
+	{
+		bSpawnProtected = false;
+		if (const UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(SpawnProtectionTimer);
+		}
+	}
+}
+
+void UEMBCombatComponent::ResetFromDeath()
+{
+	if (!HasAuthorityOwner() || !GetWorld() || CurrentState != EEMBCombatState::Dead)
+	{
+		return;
+	}
+
+	// Dead est un état sans sortie dans la table de transitions (CanTransitionTo) : la réanimation passe
+	// donc par une sortie explicite, réservée à cette fonction.
+	const EEMBCombatState OldState = CurrentState;
+	ExitState(OldState, EEMBCombatState::Idle);
+	CurrentState = EEMBCombatState::Idle;
+	BufferedInput = EEMBCombatInput::None;
+	RiposteTarget.Reset();
+	bKilledInLethalZone = false;
+	EnterState(EEMBCombatState::Idle, OldState);
+	OnCombatStateChanged.Broadcast(OldState, EEMBCombatState::Idle);
 }
 
 bool UEMBCombatComponent::HasStateTag(FGameplayTag Tag) const
@@ -221,7 +282,7 @@ bool UEMBCombatComponent::HasStateTag(FGameplayTag Tag) const
 	}
 	if (Tag.MatchesTagExact(EMBTags::State_Combat_Invulnerable.GetTag()))
 	{
-		return InvulnerableCount > 0;
+		return IsInvulnerable();
 	}
 	if (Tag.MatchesTagExact(EMBTags::State_Combat_HyperArmor.GetTag()))
 	{
@@ -449,6 +510,10 @@ void UEMBCombatComponent::EnterState(EEMBCombatState NewState, EEMBCombatState O
 		{
 			Multicast_StopMontage(ChargeLoopMontage, 0.15f);
 		}
+		else if (OldState == EEMBCombatState::Dead && DeathMontage)
+		{
+			Multicast_StopMontage(DeathMontage, 0.2f); // Réanimé : on relève le personnage.
+		}
 		break;
 
 	case EEMBCombatState::LightAttack:
@@ -466,6 +531,7 @@ void UEMBCombatComponent::EnterState(EEMBCombatState NewState, EEMBCombatState O
 
 	case EEMBCombatState::ChargedAttack:
 		// Phase de charge : hyper-armure dès le début, jusqu'à la fin de la fenêtre active (voir EndHitWindow).
+		CancelSpawnProtection(); // Charger une attaque compte comme attaquer.
 		bCharging = true;
 		ChargeStartTime = Now;
 		LastAttackState = NewState;
@@ -564,6 +630,7 @@ void UEMBCombatComponent::EnterState(EEMBCombatState NewState, EEMBCombatState O
 		break;
 
 	case EEMBCombatState::Dead:
+		CancelSpawnProtection();
 		bCharging = false;
 		bBlockHeld = false;
 		bChargeHeld = false;
@@ -616,6 +683,7 @@ void UEMBCombatComponent::OnActionFinished()
 
 void UEMBCombatComponent::HandleOwnerDeath(AActor* Killer)
 {
+	bKilledInLethalZone = bProcessingLethalZone; // Lu par le personnage dans BeginDeath.
 	TransitionTo(EEMBCombatState::Dead);
 }
 
@@ -964,6 +1032,7 @@ void UEMBCombatComponent::ReleaseCharge()
 
 void UEMBCombatComponent::BeginAttackAction(const FEMBAttackDefinition& Definition, EEMBCombatState State)
 {
+	CancelSpawnProtection(); // Attaquer met fin à l'invulnérabilité de réapparition.
 	ActiveAttack = Definition;
 	LastAttackState = State;
 	bHitWindowStarted = false;
@@ -1304,21 +1373,40 @@ EEMBHitResult UEMBCombatComponent::ApplyHitToActor(AActor* Target, const FEMBHit
 	return EEMBHitResult::Ignored;
 }
 
-EEMBHitResult UEMBCombatComponent::ReceiveHit(const FEMBHitData& Hit)
+EEMBHitResult UEMBCombatComponent::ReceiveHit(const FEMBHitData& IncomingHit)
 {
 	if (!HasAuthorityOwner() || !Stats || !GetWorld())
 	{
 		return EEMBHitResult::Ignored;
 	}
-	if (CurrentState == EEMBCombatState::Dead || Stats->IsDead() || Hit.Instigator == GetOwner())
+	if (CurrentState == EEMBCombatState::Dead || Stats->IsDead() || IncomingHit.Instigator == GetOwner())
 	{
 		return EEMBHitResult::Ignored;
+	}
+
+	// Copie modifiable : la résistance au feu réduit les dégâts avant toute autre règle (garde, parade,
+	// dégâts continus), et le reste de la résolution travaille sur la valeur réduite.
+	FEMBHitData Hit = IncomingHit;
+
+	// Le drapeau de zone létale est levé pendant TOUTE la résolution, puis rétabli à la sortie (quel que soit
+	// le return) : OnDeath, donc HandleOwnerDeath, est diffusé à l'intérieur d'ApplyDamage.
+	TGuardValue<bool> LethalZoneGuard(bProcessingLethalZone, Hit.bLethalZone);
+
+	if (Hit.DamageType == EEMBDamageType::Fire)
+	{
+		Hit.Damage *= 1.f - GetFireResistance();
 	}
 
 	// Dégâts continus (lave, brûlure, zones de feu) : dégâts directs. Ni esquive, ni garde, ni parade,
 	// ni counter-hit, ni multicast (ces dégâts tombent à haute fréquence : pas de retour de coup réseau).
 	if (Hit.bDamageOverTime)
 	{
+		// Seule l'invulnérabilité de réapparition les arrête : sinon un joueur qui réapparaît dans la lave
+		// mourrait avant d'avoir pu bouger. Les i-frames de roulade, elles, ne protègent pas des dégâts continus.
+		if (bSpawnProtected)
+		{
+			return EEMBHitResult::Dodged;
+		}
 		Stats->ApplyDamage(Hit.Damage, Hit.Instigator);
 		return Stats->IsDead() ? EEMBHitResult::Killed : EEMBHitResult::Hit;
 	}

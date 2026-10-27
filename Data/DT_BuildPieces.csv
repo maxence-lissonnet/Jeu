@@ -1,32 +1,33 @@
----,DisplayName,Category,Material,PieceClass,Cost,bRequiresGroundSupport,bIsGroundAnchor,Icon,RequiredGlyph
-Wood_Foundation,Fondation en bois,Foundation,Wood,,"((""Wood"", 20))",False,True,,G_WoodFrame
-Wood_Floor,Sol en bois,Floor,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame
-Wood_Wall,Mur en bois,Wall,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame
-Wood_Roof,Toit en bois,Roof,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame
-Wood_Pillar,Pilier en bois,Pillar,Wood,,"((""Wood"", 5))",False,False,,G_WoodFrame
-Wood_Stairs,Escalier en bois,Stairs,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame
-Stone_Foundation,Fondation en pierre,Foundation,Stone,,"((""Stone"", 24),(""Wood"", 4))",False,True,,G_StoneMasonry
-Stone_Floor,Sol en pierre,Floor,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry
-Stone_Wall,Mur en pierre,Wall,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry
-Stone_Roof,Toit en pierre,Roof,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry
-Stone_Pillar,Pilier en pierre,Pillar,Stone,,"((""Stone"", 6),(""Wood"", 1))",False,False,,G_StoneMasonry
-Stone_Stairs,Escalier en pierre,Stairs,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry
-Iron_Foundation,Fondation en fer forge,Foundation,Iron,,"((""IronIngot"", 12),(""Stone"", 12))",False,True,,G_IronFrame
-Iron_Floor,Sol en fer forge,Floor,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame
-Iron_Wall,Mur en fer forge,Wall,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame
-Iron_Roof,Toit en fer forge,Roof,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame
-Iron_Pillar,Pilier en fer forge,Pillar,Iron,,"((""IronIngot"", 3),(""Stone"", 3))",False,False,,G_IronFrame
-Iron_Stairs,Escalier en fer forge,Stairs,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame
-Draconic_Foundation,Fondation draconique,Foundation,Draconic,,"((""DragonBone"", 4),(""Obsidian"", 16),(""IronIngot"", 8))",False,True,,G_DraconicArchitecture
-Draconic_Floor,Sol draconique,Floor,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture
-Draconic_Wall,Mur draconique,Wall,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture
-Draconic_Roof,Toit draconique,Roof,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture
-Draconic_Pillar,Pilier draconique,Pillar,Draconic,,"((""DragonBone"", 1),(""Obsidian"", 4),(""IronIngot"", 2))",False,False,,G_DraconicArchitecture
-Draconic_Stairs,Escalier draconique,Stairs,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture
-Bed,Lit,Furniture,Wood,,"((""Wood"", 20),(""Fiber"", 15))",True,False,,G_Bed
-StorageChest,Coffre de rangement,Furniture,Wood,,"((""Wood"", 25))",True,False,,G_StorageChest
-Campfire,Feu de camp,Workstation,Stone,,"((""Stone"", 8),(""Wood"", 5))",True,False,,G_Campfire
-Workbench,Etabli,Workstation,Wood,,"((""Wood"", 30),(""Flint"", 10))",True,False,,G_Workbench
-Forge,Forge,Workstation,Stone,,"((""Stone"", 40),(""IronOre"", 10))",True,False,,G_Forge
-Smelter,Fonderie,Workstation,Stone,,"((""Stone"", 60),(""IronIngot"", 10))",True,False,,G_Smelting
-DraconicForge,Forge draconique,Workstation,Draconic,,"((""DragonBone"", 6),(""Obsidian"", 20),(""EmberHeart"", 1),(""BlackSteelIngot"", 10))",True,False,,G_DraconicForge
+---,DisplayName,Category,Material,PieceClass,Cost,bRequiresGroundSupport,bIsGroundAnchor,Icon,RequiredGlyph,bIsRespawnPoint,HeatRadius,HeatBonus,PurifyRadius,PurifyRate
+Wood_Foundation,Fondation en bois,Foundation,Wood,,"((""Wood"", 20))",False,True,,G_WoodFrame,False,0,0,0,0
+Wood_Floor,Sol en bois,Floor,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame,False,0,0,0,0
+Wood_Wall,Mur en bois,Wall,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame,False,0,0,0,0
+Wood_Roof,Toit en bois,Roof,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame,False,0,0,0,0
+Wood_Pillar,Pilier en bois,Pillar,Wood,,"((""Wood"", 5))",False,False,,G_WoodFrame,False,0,0,0,0
+Wood_Stairs,Escalier en bois,Stairs,Wood,,"((""Wood"", 10))",False,False,,G_WoodFrame,False,0,0,0,0
+Stone_Foundation,Fondation en pierre,Foundation,Stone,,"((""Stone"", 24),(""Wood"", 4))",False,True,,G_StoneMasonry,False,0,0,0,0
+Stone_Floor,Sol en pierre,Floor,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry,False,0,0,0,0
+Stone_Wall,Mur en pierre,Wall,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry,False,0,0,0,0
+Stone_Roof,Toit en pierre,Roof,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry,False,0,0,0,0
+Stone_Pillar,Pilier en pierre,Pillar,Stone,,"((""Stone"", 6),(""Wood"", 1))",False,False,,G_StoneMasonry,False,0,0,0,0
+Stone_Stairs,Escalier en pierre,Stairs,Stone,,"((""Stone"", 12),(""Wood"", 2))",False,False,,G_StoneMasonry,False,0,0,0,0
+Iron_Foundation,Fondation en fer forge,Foundation,Iron,,"((""IronIngot"", 12),(""Stone"", 12))",False,True,,G_IronFrame,False,0,0,0,0
+Iron_Floor,Sol en fer forge,Floor,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame,False,0,0,0,0
+Iron_Wall,Mur en fer forge,Wall,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame,False,0,0,0,0
+Iron_Roof,Toit en fer forge,Roof,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame,False,0,0,0,0
+Iron_Pillar,Pilier en fer forge,Pillar,Iron,,"((""IronIngot"", 3),(""Stone"", 3))",False,False,,G_IronFrame,False,0,0,0,0
+Iron_Stairs,Escalier en fer forge,Stairs,Iron,,"((""IronIngot"", 6),(""Stone"", 6))",False,False,,G_IronFrame,False,0,0,0,0
+Draconic_Foundation,Fondation draconique,Foundation,Draconic,,"((""DragonBone"", 4),(""Obsidian"", 16),(""IronIngot"", 8))",False,True,,G_DraconicArchitecture,False,0,0,0,0
+Draconic_Floor,Sol draconique,Floor,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture,False,0,0,0,0
+Draconic_Wall,Mur draconique,Wall,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture,False,0,0,0,0
+Draconic_Roof,Toit draconique,Roof,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture,False,0,0,0,0
+Draconic_Pillar,Pilier draconique,Pillar,Draconic,,"((""DragonBone"", 1),(""Obsidian"", 4),(""IronIngot"", 2))",False,False,,G_DraconicArchitecture,False,0,0,0,0
+Draconic_Stairs,Escalier draconique,Stairs,Draconic,,"((""DragonBone"", 2),(""Obsidian"", 8),(""IronIngot"", 4))",False,False,,G_DraconicArchitecture,False,0,0,0,0
+Bed,Lit,Furniture,Wood,,"((""Wood"", 20),(""Fiber"", 15))",True,False,,G_Bed,True,0,0,0,0
+StorageChest,Coffre de rangement,Furniture,Wood,,"((""Wood"", 25))",True,False,,G_StorageChest,False,0,0,0,0
+Campfire,Feu de camp,Workstation,Stone,,"((""Stone"", 8),(""Wood"", 5))",True,False,,G_Campfire,True,600,15,0,0
+Workbench,Etabli,Workstation,Wood,,"((""Wood"", 30),(""Flint"", 10))",True,False,,G_Workbench,False,0,0,0,0
+Forge,Forge,Workstation,Stone,,"((""Stone"", 40),(""IronOre"", 10))",True,False,,G_Forge,False,400,10,0,0
+Smelter,Fonderie,Workstation,Stone,,"((""Stone"", 60),(""IronIngot"", 10))",True,False,,G_Smelting,False,0,0,0,0
+DraconicForge,Forge draconique,Workstation,Draconic,,"((""DragonBone"", 6),(""Obsidian"", 20),(""EmberHeart"", 1),(""BlackSteelIngot"", 10))",True,False,,G_DraconicForge,False,0,0,0,0
+PurifyingBrazier,Brasero purificateur,Workstation,Stone,,"((""Stone"", 20),(""IronIngot"", 5),(""MoonSilver"", 2))",True,False,,G_PurifyingBrazier,False,0,0,800,1

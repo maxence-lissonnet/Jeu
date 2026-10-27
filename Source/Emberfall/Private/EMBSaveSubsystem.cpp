@@ -5,8 +5,9 @@
 #include "Emberfall.h"
 #include "EMBBuildablePiece.h"
 #include "EMBBuildingTypes.h"
+#include "EMBBossBase.h"
 #include "EMBCombatComponent.h"
-#include "EMBDragonBoss.h"
+#include "EMBDeathBag.h"
 #include "EMBGameplayTags.h"
 #include "EMBInventoryComponent.h"
 #include "EMBPlayerCharacter.h"
@@ -14,9 +15,11 @@
 #include "EMBProgressionComponent.h"
 #include "EMBProgressionSettings.h"
 #include "EMBProgressionSubsystem.h"
+#include "EMBRespawnSubsystem.h"
 #include "EMBSaveGame.h"
 #include "EMBStatsComponent.h"
 #include "EMBStructureSubsystem.h"
+#include "EMBSurvivalComponent.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -308,12 +311,20 @@ void UEMBSaveSubsystem::FinishLoading()
 			UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde %s ignoree : elle appartient au monde %d (monde actif %d)."), Label, Save->SlotIndex, ActiveSlot);
 			return nullptr;
 		}
-		if (!Save->MigrateToCurrent())
+		switch (Save->MigrateToCurrent())
 		{
-			// Le fichier existe mais ce binaire ne sait pas le lire (version plus récente ou migration impossible).
-			// Écrire dans l'AUTRE fichier est sans danger, mais écrire un jour dans CELUI-CI le détruirait : on bloque.
+		case EEMBMigrationResult::Ok:
+			break;
+		case EEMBMigrationResult::TooRecent:
+			// Écrite par un binaire plus récent : ce jeu ne sait pas la lire, mais elle est précieuse. Écrire dans
+			// l'AUTRE fichier serait sans danger, mais écrire un jour dans CELUI-CI la détruirait : on bloque tout.
 			bBlockedByUnusableSave = true;
-			UE_LOG(LogEmberfall, Error, TEXT("Sauvegarde %s du monde %d illisible par cette version du jeu : AUCUNE ecriture ne sera faite pour ne pas la detruire."), Label, ActiveSlot);
+			UE_LOG(LogEmberfall, Error, TEXT("Sauvegarde %s du monde %d ecrite par une version plus recente du jeu : AUCUNE ecriture ne sera faite pour ne pas la detruire."), Label, ActiveSlot);
+			return nullptr;
+		case EEMBMigrationResult::Invalid:
+		default:
+			// Version < 1 ou migration impossible : fichier inutilisable, simplement ignoré (n'empêche pas d'écrire).
+			UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde %s du monde %d inutilisable (version invalide ou migration impossible) : ignoree."), Label, ActiveSlot);
 			return nullptr;
 		}
 		if (!Save->IsComplete())
@@ -388,21 +399,45 @@ void UEMBSaveSubsystem::ApplyLoadedSave(UWorld* World, UEMBSaveGame* Save)
 	{
 		Progression->RestoreWorldEvents(Save->World.WorldEvents);
 
-		// Un dragon dont la défaite est enregistrée ne doit pas réapparaître. Son BeginPlay a pu s'exécuter AVANT la fin
-		// du chargement asynchrone et n'a donc rien vu : on le lui signale ici (ApplyDefeatedFromSave est idempotent).
-		if (Progression->IsWorldEventRecorded(EMBTags::Event_Boss_Killed_Dragon.GetTag()))
+		// Un boss dont la défaite est enregistrée ne doit pas réapparaître. Son BeginPlay a pu s'exécuter AVANT la fin du
+		// chargement asynchrone et n'a donc rien vu : on le lui signale ici, quel que soit le boss (dragon, colosse,
+		// séraphe...), grâce à la base commune. ApplyDefeatedFromSave est idempotent.
+		for (TActorIterator<AEMBBossBase> It(World); It; ++It)
 		{
-			for (TActorIterator<AEMBDragonBoss> It(World); It; ++It)
+			AEMBBossBase* Boss = *It;
+			const FGameplayTag DefeatedTag = Boss ? Boss->GetDefeatedEventTag() : FGameplayTag();
+			if (DefeatedTag.IsValid() && Progression->IsWorldEventRecorded(DefeatedTag))
 			{
-				if (AEMBDragonBoss* Boss = *It)
-				{
-					Boss->ApplyDefeatedFromSave();
-				}
+				Boss->ApplyDefeatedFromSave();
 			}
 		}
 	}
 
 	SpawnSavedPieces(World, Save->Pieces);
+
+	// Sacs de mort (v2) : recréés après les constructions. Contenu assaini, nombre borné.
+	if (UEMBRespawnSubsystem* Respawn = World->GetSubsystem<UEMBRespawnSubsystem>())
+	{
+		int32 BagCount = 0;
+		for (const FEMBDeathBagSaveData& SavedBag : Save->World.DeathBags)
+		{
+			if (BagCount >= MaxSavedPlayers)
+			{
+				break;
+			}
+			if (SavedBag.OwnerStableId.IsEmpty() || !IsTransformSane(SavedBag.Transform))
+			{
+				continue;
+			}
+			TArray<FEMBResourceEntry> Contents = SavedBag.Contents;
+			UEMBInventoryComponent::SanitizeResourceList(Contents);
+			if (!Contents.IsEmpty())
+			{
+				Respawn->RestoreBag(SavedBag.OwnerStableId, SavedBag.Transform, Contents);
+				++BagCount;
+			}
+		}
+	}
 }
 
 void UEMBSaveSubsystem::SpawnSavedPieces(UWorld* World, const TArray<FEMBPieceSaveData>& SavedPieces)
@@ -499,6 +534,7 @@ void UEMBSaveSubsystem::SpawnSavedPieces(UWorld* World, const TArray<FEMBPieceSa
 
 		// Le PlayerId de session du poseur est inconnu au chargement : seul l'identifiant stable est restauré.
 		Piece->InitializePiece(SavedPiece.RowName, Row->Material, Row->Category, bAnchored, INDEX_NONE);
+		Piece->ApplyRowFunctions(*Row); // point de réapparition, chaleur, purification : avant BeginPlay
 		// Santé corrompue (NaN/infini) : pièce intacte, pas détruite.
 		Piece->RestoreFromSave(FMath::IsFinite(SavedPiece.Health) ? SavedPiece.Health : Piece->GetMaxHealth(), SavedPiece.PlacerStableId);
 		Piece->FinishSpawning(SavedPiece.Transform);
@@ -510,6 +546,26 @@ void UEMBSaveSubsystem::SpawnSavedPieces(UWorld* World, const TArray<FEMBPieceSa
 
 	// UN recalcul global depuis toutes les ancres. Les pièces non soutenues sont détruites sans effet visible.
 	const int32 UnsupportedCount = Structure->EndBulkLoad();
+
+	// Liaisons de réapparition (v2) : SaveId de pièce -> pièce rechargée. Une pièce détruite car non soutenue, ou qui
+	// n'est plus un point de réapparition, est ignorée (le joueur retombera sur le PlayerStart).
+	if (UEMBRespawnSubsystem* Respawn = World->GetSubsystem<UEMBRespawnSubsystem>())
+	{
+		for (const TPair<FString, FEMBPlayerSaveData>& Entry : PlayerCache)
+		{
+			const int32 BoundId = Entry.Value.BoundRespawnPieceSaveId;
+			if (BoundId > 0)
+			{
+				if (AEMBBuildablePiece** BoundPiece = PieceBySaveId.Find(BoundId))
+				{
+					if (IsValid(*BoundPiece))
+					{
+						Respawn->RestoreBinding(Entry.Key, *BoundPiece);
+					}
+				}
+			}
+		}
+	}
 
 	// Contrôle des liens sauvegardés contre les contacts recalculés : diagnostic seulement, jamais bloquant.
 	int32 MismatchCount = 0;
@@ -666,8 +722,46 @@ void UEMBSaveSubsystem::RestorePlayer(APlayerController* PC)
 	RestoreFromCache(PC);
 }
 
+FString UEMBSaveSubsystem::GetPlayerKey(const APlayerController* PC) const
+{
+	if (!PC || !PC->PlayerState)
+	{
+		return FString();
+	}
+	if (UnpersistedControllers.Contains(const_cast<APlayerController*>(PC)))
+	{
+		// Joueur refusé comme doublon d'identifiant : clé de session, jamais sauvegardée.
+		return FString::Printf(TEXT("Session_%d"), PC->PlayerState->GetPlayerId());
+	}
+	return GetControllerId(PC);
+}
+
+bool UEMBSaveSubsystem::IsPlayerPersisted(const APlayerController* PC) const
+{
+	return PC && !UnpersistedControllers.Contains(const_cast<APlayerController*>(PC));
+}
+
+bool UEMBSaveSubsystem::GetLastSafeTransform(const FString& StableId, FTransform& OutTransform) const
+{
+	if (const FTransform* Safe = LastSafeTransforms.Find(StableId))
+	{
+		OutTransform = *Safe;
+		return true;
+	}
+	return false;
+}
+
 void UEMBSaveSubsystem::RestoreFromCache(APlayerController* PC)
 {
+	// Un sac de mort déjà rechargé pour ce joueur reçoit son PlayerId de session (invite d'interaction côté client).
+	if (UWorld* World = GetServerWorld())
+	{
+		if (UEMBRespawnSubsystem* Respawn = World->GetSubsystem<UEMBRespawnSubsystem>())
+		{
+			Respawn->NotifyPlayerPresent(PC);
+		}
+	}
+
 	const FString StableId = GetControllerId(PC);
 	const FEMBPlayerSaveData* Data = PlayerCache.Find(StableId);
 	if (!Data)
@@ -779,6 +873,16 @@ bool UEMBSaveSubsystem::TryRestorePawn(APlayerController* PC, const FEMBPlayerSa
 			Stats->RestoreFromSave(Data.Health, Data.Stamina);
 		}
 	}
+	// Survie (v2) : absente d'une sauvegarde v1 migrée, le joueur garde alors ses valeurs par défaut.
+	if (Data.bHasSurvivalState)
+	{
+		if (UEMBSurvivalComponent* Survival = Character->FindComponentByClass<UEMBSurvivalComponent>())
+		{
+			// Les bornes (valeurs non finies, plages, Corruption max importable...) sont celles du composant : une seule
+			// règle de validation, pas de seconde copie qui divergerait.
+			Survival->ImportSaveData(Data.Survival);
+		}
+	}
 
 	// Sans transform exploitable (mort sans point sûr connu), le joueur reste au PlayerStart choisi par le GameMode.
 	if (Data.bHasPawnTransform && IsTransformSane(Data.PawnTransform))
@@ -853,19 +957,52 @@ void UEMBSaveSubsystem::BuildPlayerData(APlayerController* PC, FEMBPlayerSaveDat
 	OutData.bHasPawnTransform = true;
 	OutData.PawnTransform = FTransform(Character->GetActorRotation(), Character->GetActorLocation());
 
+	// Jauges de survie (v2).
+	if (const UEMBSurvivalComponent* Survival = Character->FindComponentByClass<UEMBSurvivalComponent>())
+	{
+		Survival->ExportSaveData(OutData.Survival);
+		OutData.bHasSurvivalState = true;
+	}
+
 	if (bDead)
 	{
-		// Un joueur mort est enregistré PV et endurance pleins. Il n'y a aucune pénalité de mort codée.
+		// Un joueur mort est enregistré VIVANT : PV et endurance pleins, valeurs de survie de réapparition (faim 60,
+		// soif 60, Corruption 0, température neutre, aucun effet temporaire). Aucun sac n'est créé par la sauvegarde :
+		// le sac n'existe qu'à la réapparition réelle, l'inventaire enregistré est donc conservé tel quel.
 		if (Stats)
 		{
-			OutData.Health = Stats->GetMaxHealth();
-			OutData.Stamina = Stats->GetMaxStamina();
+			// Maxima de BASE (archétype du composant : multiplicateurs à 1), et non les maxima effectifs : ceux-ci sont
+			// réduits par la Corruption ou la soif du joueur MORT, alors qu'il réapparaît avec des valeurs remises à neuf.
+			const UEMBStatsComponent* BaseStats = Cast<UEMBStatsComponent>(Stats->GetArchetype());
+			OutData.Health = BaseStats ? BaseStats->GetMaxHealth() : EMBCombatDefaults::MaxHealth;
+			OutData.Stamina = BaseStats ? BaseStats->GetMaxStamina() : EMBCombatDefaults::MaxStamina;
+		}
+		if (OutData.bHasSurvivalState)
+		{
+			// Valeurs de réapparition (référentiel 9.2), lues dans EMBSurvivalDefaults : aucune valeur en dur ici.
+			OutData.Survival.Hunger = EMBSurvivalDefaults::RespawnHunger;
+			OutData.Survival.Thirst = EMBSurvivalDefaults::RespawnThirst;
+			OutData.Survival.Corruption = 0.f;
+			OutData.Survival.FeltTemperature = EMBSurvivalDefaults::NeutralTemperatureC;
+			OutData.Survival.FireOilRemaining = 0.f;
+			OutData.Survival.IntoxicationRemaining = 0.f;
 		}
 		if (UEMBProgressionSettings::Get()->DeathSaveBehavior == EEMBDeathSaveBehavior::RespawnAtSafePoint)
 		{
-			// Dernier point sûr ; à défaut, aucune position : retour au PlayerStart.
-			OutData.bHasPawnTransform = OutData.bHasLastSafeTransform;
-			OutData.PawnTransform = OutData.LastSafeTransform;
+			// Point de réapparition lié s'il est valide ; sinon dernier point sûr ; à défaut aucune position (PlayerStart).
+			FTransform BoundTransform;
+			const UWorld* World = GetServerWorld();
+			UEMBRespawnSubsystem* Respawn = World ? World->GetSubsystem<UEMBRespawnSubsystem>() : nullptr;
+			if (Respawn && Respawn->GetRespawnTransform(PC, BoundTransform))
+			{
+				OutData.bHasPawnTransform = true;
+				OutData.PawnTransform = BoundTransform;
+			}
+			else
+			{
+				OutData.bHasPawnTransform = OutData.bHasLastSafeTransform;
+				OutData.PawnTransform = OutData.LastSafeTransform;
+			}
 		}
 	}
 }
@@ -913,10 +1050,12 @@ void UEMBSaveSubsystem::CapturePlayer(APlayerController* PC)
 		}
 	}
 
-	// Le joueur part : son identifiant redevient disponible.
+	// Le joueur part : son identifiant redevient disponible. Ses données sont DÉJÀ dans le cache (capturées ci-dessus,
+	// immédiatement) : même si l'écriture est reportée par une rencontre de boss, elles seront dans le prochain fichier
+	// écrit, et ne dépendent plus de la présence du joueur.
 	ReleaseIdentity(PC);
 
-	// Autosave à la déconnexion (reportée si un boss est en rencontre).
+	// Autosave à la déconnexion (écriture reportée si un boss est en rencontre : acceptable, la capture est faite).
 	if (bLoaded)
 	{
 		RequestSave(false);
@@ -970,8 +1109,9 @@ void UEMBSaveSubsystem::HandleSafePointTimer()
 		}
 	}
 
-	// Une sauvegarde reportée à cause d'un boss est déclenchée dès que la rencontre est terminée.
-	if (bSaveDeferredByBoss && !bBossActive)
+	// Une sauvegarde reportée à cause d'un boss est réévaluée à chaque relevé : écrite dès que la rencontre est
+	// terminée, ou forcée par RequestSave si le report dure trop longtemps.
+	if (bSaveDeferredByBoss)
 	{
 		RequestSave(false);
 	}
@@ -997,9 +1137,9 @@ bool UEMBSaveSubsystem::IsBossEncounterActive() const
 
 	// Rencontre engagée, boss vivant, au moins un joueur vivant à proximité (accesseur public de Dev C).
 	// Évalué uniquement au moment de RequestSave et du relevé de 10 s : jamais à chaque frame.
-	for (TActorIterator<AEMBDragonBoss> It(World); It; ++It)
+	for (TActorIterator<AEMBBossBase> It(World); It; ++It)
 	{
-		const AEMBDragonBoss* Boss = *It;
+		const AEMBBossBase* Boss = *It;
 		if (Boss && Boss->IsEncounterActive())
 		{
 			return true;
@@ -1031,8 +1171,22 @@ void UEMBSaveSubsystem::RequestSave(bool bForce)
 	}
 	if (!bForce && IsBossEncounterActive())
 	{
-		bSaveDeferredByBoss = true;
-		return;
+		// Report pendant une rencontre de boss, mais pas indéfiniment : un combat très long (ou un boss jamais vaincu)
+		// ne doit pas laisser des heures de progression non sauvegardées. Au-delà de 300 s de report, on force.
+		constexpr double MaxDeferralSeconds = 300.0;
+		const UWorld* World = GetServerWorld();
+		const double Now = World ? World->GetTimeSeconds() : 0.0;
+		if (!bSaveDeferredByBoss)
+		{
+			bSaveDeferredByBoss = true;
+			DeferredSinceTime = Now;
+			return;
+		}
+		if ((Now - DeferredSinceTime) < MaxDeferralSeconds)
+		{
+			return;
+		}
+		UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde reportee depuis plus de %.0f s par une rencontre de boss : ecriture forcee."), MaxDeferralSeconds);
 	}
 	bSaveDeferredByBoss = false;
 
@@ -1045,7 +1199,32 @@ void UEMBSaveSubsystem::RequestSave(bool bForce)
 	StartWrite();
 }
 
-void UEMBSaveSubsystem::CapturePieces(TArray<FEMBPieceSaveData>& OutPieces) const
+void UEMBSaveSubsystem::CaptureDeathBags(TArray<FEMBDeathBagSaveData>& OutBags) const
+{
+	const UWorld* World = GetServerWorld();
+	const UEMBRespawnSubsystem* Respawn = World ? World->GetSubsystem<UEMBRespawnSubsystem>() : nullptr;
+	if (!Respawn)
+	{
+		return;
+	}
+
+	// Seuls les sacs de joueurs persistés sont enregistrés (le sous-système les filtre).
+	TArray<const AEMBDeathBag*> Bags;
+	Respawn->GetPersistentBags(Bags);
+	for (const AEMBDeathBag* Bag : Bags)
+	{
+		if (OutBags.Num() >= MaxSavedPlayers)
+		{
+			break;
+		}
+		FEMBDeathBagSaveData& Data = OutBags.AddDefaulted_GetRef();
+		Data.OwnerStableId = Bag->GetOwnerKey();
+		Data.Transform = FTransform(Bag->GetActorRotation(), Bag->GetActorLocation());
+		Data.Contents = Bag->GetContents();
+	}
+}
+
+void UEMBSaveSubsystem::CapturePieces(TArray<FEMBPieceSaveData>& OutPieces, TMap<const AEMBBuildablePiece*, int32>& OutSaveIds) const
 {
 	const UWorld* World = GetServerWorld();
 	const UEMBStructureSubsystem* Structure = World ? World->GetSubsystem<UEMBStructureSubsystem>() : nullptr;
@@ -1058,7 +1237,7 @@ void UEMBSaveSubsystem::CapturePieces(TArray<FEMBPieceSaveData>& OutPieces) cons
 	Structure->GetAllPieces(AllPieces);
 
 	// Seules les pièces posées par des joueurs sont sauvegardées : celles du niveau reviennent avec le niveau.
-	TMap<const AEMBBuildablePiece*, int32> SaveIdByPiece;
+	TMap<const AEMBBuildablePiece*, int32>& SaveIdByPiece = OutSaveIds;
 	TArray<const AEMBBuildablePiece*> Kept;
 	Kept.Reserve(AllPieces.Num());
 	for (const AEMBBuildablePiece* Piece : AllPieces)
@@ -1159,10 +1338,30 @@ UEMBSaveGame* UEMBSaveSubsystem::BuildSnapshot()
 		UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde : plus de %d joueurs connus, les moins recents sont oublies."), MaxSavedPlayers);
 	}
 
-	CapturePieces(Save->Pieces);
+	TMap<const AEMBBuildablePiece*, int32> SaveIdByPiece;
+	CapturePieces(Save->Pieces, SaveIdByPiece);
 
 	if (const UWorld* World = GetServerWorld())
 	{
+		// Liaisons de réapparition (v2) : joueur -> pièce liée, converties en SaveId de CE fichier. Une liaison vers une
+		// pièce détruite, effondrée, ou non sauvegardée (pièce du niveau) n'est pas enregistrée.
+		if (const UEMBRespawnSubsystem* Respawn = World->GetSubsystem<UEMBRespawnSubsystem>())
+		{
+			for (FEMBPlayerSaveData& Player : Save->Players)
+			{
+				Player.BoundRespawnPieceSaveId = INDEX_NONE;
+				if (const AEMBBuildablePiece* Bound = Respawn->GetBoundPiece(Player.StableId))
+				{
+					if (const int32* BoundId = SaveIdByPiece.Find(Bound))
+					{
+						Player.BoundRespawnPieceSaveId = *BoundId;
+					}
+				}
+			}
+		}
+
+		CaptureDeathBags(Save->World.DeathBags);
+
 		if (const UEMBProgressionSubsystem* Progression = World->GetSubsystem<UEMBProgressionSubsystem>())
 		{
 			Save->World.WorldEvents = Progression->GetWorldEvents();

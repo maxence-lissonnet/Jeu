@@ -37,9 +37,11 @@ public:
 	// ---------------------------------------------------------------- Contrat (section 3.1)
 
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetHealth() const { return Health; }
-	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxHealth() const { return MaxHealth; }
+	/** Maximum EFFECTIF : valeur de base x multiplicateur de survie (Corruption...). */
+	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxHealth() const;
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetStamina() const { return Stamina; }
-	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxStamina() const { return MaxStamina; }
+	/** Maximum EFFECTIF : valeur de base x multiplicateur de survie (soif...). */
+	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxStamina() const;
 	/** Serveur : valeur exacte. Client : valeur répliquée, mise à jour par pas d'au moins 1 point (économie de bande passante). */
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetPoise() const;
 	UFUNCTION(BlueprintPure, Category = "Emberfall|Stats") float GetMaxPoise() const { return MaxPoise; }
@@ -71,6 +73,19 @@ public:
 
 	/** Mise à l'échelle coop des boss. Si bRefill est faux, la vie courante est simplement plafonnée au nouveau maximum. */
 	UFUNCTION(BlueprintCallable, Category = "Emberfall|Stats") void SetMaxHealth(float NewMax, bool bRefill);
+
+	/**
+	 * Serveur, poussé par la survie. Multiplicateurs appliqués aux maxima effectifs de vie et d'endurance
+	 * (les valeurs courantes sont plafonnées au nouveau maximum, sans soin) et à la régénération d'endurance,
+	 * en plus du multiplicateur de garde. Neutres (1, 1, 1) = comportement de base.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Emberfall|Stats") void SetSurvivalModifiers(float MaxHealthMultiplier, float MaxStaminaMultiplier, float StaminaRegenMultiplierFromSurvival);
+
+	/**
+	 * Serveur. Fait sortir de l'état mort : vie et endurance à la fraction demandée de leur maximum effectif
+	 * (la vie reste >= 1), poise pleine. Sans effet si l'acteur n'est pas mort.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Emberfall|Stats") void ReviveWithFraction(float HealthFraction, float StaminaFraction);
 
 	/**
 	 * Serveur. Restaure vie et endurance depuis une sauvegarde (valeurs bornées : vie entre 1 et le maximum,
@@ -125,6 +140,7 @@ private:
 	UFUNCTION() void OnRep_Stamina(float OldValue);
 	UFUNCTION() void OnRep_Poise(float OldValue);
 	UFUNCTION() void OnRep_MaxHealth(float OldValue);
+	UFUNCTION() void OnRep_MaxMultipliers();
 
 	bool HasAuthorityOwner() const;
 	void BroadcastAttribute(EEMBStatType Type) const;
@@ -151,6 +167,13 @@ private:
 
 	/** Multiplicateur de régénération d'endurance (serveur uniquement, non répliqué). */
 	float StaminaRegenMultiplier = 1.f;
+
+	/** Multiplicateur de régénération venant de la survie (faim, chaleur) ; combiné à celui de la garde. Serveur seulement. */
+	float SurvivalStaminaRegenMultiplier = 1.f;
+
+	/** Multiplicateurs de maxima venant de la survie. Vie : à tous (effets visuels) ; endurance : propriétaire. */
+	UPROPERTY(ReplicatedUsing = OnRep_MaxMultipliers) float HealthMaxMultiplier = 1.f;
+	UPROPERTY(ReplicatedUsing = OnRep_MaxMultipliers) float StaminaMaxMultiplier = 1.f;
 
 	/** Instants (temps monde serveur) de reprise de la régénération. */
 	double StaminaRegenResumeTime = 0.0;

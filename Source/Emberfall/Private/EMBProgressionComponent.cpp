@@ -8,6 +8,7 @@
 #include "EMBInventoryComponent.h"
 #include "EMBProgressionSettings.h"
 #include "EMBProgressionSubsystem.h"
+#include "EMBSurvivalComponent.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -696,8 +697,13 @@ void UEMBProgressionComponent::ApplyModifiersToPawn(APawn* Pawn)
 	{
 		Inventory->SetCarryWeightBonus(Modifiers.CarryWeight);
 	}
-	// HungerThirstRate, HarvestYield, ComfortRange, CorruptionGain, FireResistance : stockés et exposés
-	// par GetPassiveModifiers(), non appliqués (systèmes de survie et résistances non codés).
+	if (UEMBSurvivalComponent* Survival = Pawn->FindComponentByClass<UEMBSurvivalComponent>())
+	{
+		// Survie : HungerThirstRate, ComfortRange, CorruptionGain, FireResistance (et HarvestYield exposé).
+		Survival->SetPassiveModifiers(Modifiers);
+	}
+	// La résistance au feu s'applique aussi directement : le combat lit FireResistance dans ses propres
+	// modificateurs (SetPassiveModifiers ci-dessus), quel que soit le composant de survie.
 }
 
 // ================================================================================================

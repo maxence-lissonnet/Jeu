@@ -122,6 +122,25 @@ public:
 	 */
 	void SetPassiveModifiers(const FEMBPassiveModifiers& NewModifiers);
 
+	/** Serveur : le coup fatal de la dernière mort portait bLethalZone (lave, vide). Faim, froid, brûlure : non. */
+	bool WasKilledInLethalZone() const { return bKilledInLethalZone; }
+
+	/** Serveur. Sort de l'état Dead (réanimation) : retour à Idle, montage de mort arrêté. Sans effet hors de l'état Dead. */
+	void ResetFromDeath();
+
+	/**
+	 * Serveur. Invulnérabilité de réapparition ou de réanimation (compte comme State.Combat.Invulnerable,
+	 * y compris contre les dégâts continus). Annulée à la première attaque du joueur.
+	 */
+	void GrantSpawnProtection(float Seconds);
+
+	/** Serveur. Bonus de résistance au feu (huile...), additionné au passif FireResistance ; total plafonné à 0,9. */
+	void SetExtraFireResistance(float Bonus);
+
+	/** Résistance au feu effective (passif + bonus, plafond 0,9). */
+	UFUNCTION(BlueprintPure, Category = "Emberfall|Combat")
+	float GetFireResistance() const;
+
 	/** Charge portée en proportion (0 = vide, 1 = limite, > 1 = surchargé : pas de roulade). Fournie par l'inventaire. */
 	UFUNCTION(BlueprintCallable, Category = "Emberfall|Combat")
 	void SetEncumbranceRatio(float NewRatio);
@@ -340,6 +359,7 @@ private:
 	void HandleMulticastPlayMontage(UAnimMontage* Montage, float PlayRate, FName StartSection);
 	float GetDodgeIFrameEnd() const;
 	float ScaledAttackCost(float BaseCost) const;
+	void CancelSpawnProtection();
 	static float GetBlockReduction(EEMBDamageType DamageType);
 	void ApplyParryPosture(AActor* Attacker);
 	void ArmBufferExpiry();
@@ -413,6 +433,18 @@ private:
 
 	/** Bonus de passifs courants (serveur) ; tout à 0 = neutre. */
 	FEMBPassiveModifiers PassiveModifiers;
+
+	/** Bonus temporaire de résistance au feu (huile), serveur. */
+	float ExtraFireResistance = 0.f;
+
+	/** Invulnérabilité de réapparition / réanimation (serveur) et son minuteur. */
+	UPROPERTY(Replicated)
+	bool bSpawnProtected = false;
+
+	/** Cause de la dernière mort : dégâts continus (zone létale). Serveur. */
+	bool bProcessingLethalZone = false;
+	bool bKilledInLethalZone = false;
+	FTimerHandle SpawnProtectionTimer;
 	float PendingStaggerDuration;
 	bool bPendingGuardBreak;
 

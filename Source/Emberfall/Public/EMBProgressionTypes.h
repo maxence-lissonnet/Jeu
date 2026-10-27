@@ -138,7 +138,10 @@ struct EMBERFALL_API FEMBProgressionSaveData
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Progression")
-	int32 Level = 1;
+	// Défaut 0 volontairement : une valeur égale au défaut n'est pas écrite par la sérialisation par propriétés,
+	// donc une sauvegarde de niveau 1 relue avec un défaut de 1 serait indiscernable d'un champ absent. L'import
+	// ramène toujours le niveau à >= 1 et le recalcule depuis l'XP.
+	int32 Level = 0;
 
 	/** XP cumulée depuis le niveau 1. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Progression")

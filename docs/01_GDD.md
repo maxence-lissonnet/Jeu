@@ -130,7 +130,7 @@ Préparer une expédition (nourriture, fioles, outils, armes) → atteindre un n
 | **Faim** | 0-100 | −1,6 / min réelle (≈ 62 min) ; ×1,5 par grand froid | < 25 : régénération d'endurance −30 % ; 0 : −1 PV/s | nourriture cuite (+20 à +60), viande crue (+10, risque d'intoxication) |
 | **Soif** | 0-100 | −2,5 / min (40 min) ; ×2 au-dessus de 35 °C | < 25 : endurance max −20 % ; 0 : −2 PV/s | eau bouillie (+40), outre (+25 × 4), pluie |
 | **Température** | ressentie, en °C | dépend du biome, de l'heure, de la météo, des vêtements (isolation) | confort 10-28 °C ; < 5 °C : faim ×1,5 ; < −10 °C : −1 PV/s ; > 35 °C : soif ×2, régén. d'endurance −20 % ; > 45 °C : −1 PV/s | feu (+15 °C dans 6 m), fourrures, huile ignifuge (Caldera) |
-| **Corruption** | 0-100 | +0,5/s dans la brume corrompue ; +2 à +20 par coup corrompu ; nuit ×2 | 25 : chuchotements, hallucinations sonores ; 50 : PV max −15 % ; 75 : PV max −30 %, apparition d'ennemis spectraux ; 100 : mort « Possédé » (le cadavre devient un ennemi à vaincre pour récupérer son sac) | brasero purificateur (−1/s dans 8 m), tonique d'épuration (−30), dormir dans un lit abrité (−50) |
+| **Corruption** (100 : mort normale en v1.3, l'ennemi « Possédé » n'est pas codé) | 0-100 | +0,5/s dans la brume corrompue ; +2 à +20 par coup corrompu ; nuit ×2 | 25 : chuchotements, hallucinations sonores ; 50 : PV max −15 % ; 75 : PV max −30 %, apparition d'ennemis spectraux ; 100 : mort « Possédé » (le cadavre devient un ennemi à vaincre pour récupérer son sac) | brasero purificateur (−1/s dans 8 m), tonique d'épuration (−30), dormir dans un lit abrité (−50) |
 
 ---
 
@@ -422,7 +422,7 @@ Dragon ancestral titanesque, maître de la Caldera de Cendrehaute. Combat en tro
 - Progression **par personnage** (niveau, points, glyphes) ; le monde (bases, boss vaincus) appartient à l'hôte.
 - Boss : PV ×(1 + 0,6 × (joueurs − 1)), échelle figée au début du combat ; récompenses pour chaque joueur présent.
 - Pas de dégâts entre joueurs par défaut (option serveur).
-- Réanimation d'un allié tombé : prévue (non codée), 5 s d'interaction, 30 % des PV.
+- **Mort** (v1.3) : le joueur tombe et attend ; un allié peut le **réanimer** en maintenant *Interagir* 4 s à moins de 2,5 m (retour à 30 % des PV, 50 % d'endurance, sans perte). Sinon il réapparaît (dès 3 s sur demande, automatiquement à 30 s) à son **lit ou feu de camp lié**, à défaut au point de départ, avec 3 s d'invulnérabilité. Ses ressources restent dans un **sac** sur le lieu de la mort (au dernier point sûr s'il est mort dans la lave ou dans le vide) ; un seul sac à la fois, perdu s'il meurt avant de le récupérer. L'XP n'est jamais perdue.
 
 ---
 

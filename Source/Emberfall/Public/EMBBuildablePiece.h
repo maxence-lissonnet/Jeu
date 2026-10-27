@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "EMBBuildingTypes.h"
 #include "EMBHitReceiver.h"
+#include "EMBInteractable.h"
 #include "EMBBuildablePiece.generated.h"
 
 class UStaticMeshComponent;
@@ -25,7 +26,7 @@ class UNiagaraSystem;
  *  - Propriétés d'identité (matériau, catégorie...) en COND_InitialOnly : envoyées une seule fois.
  */
 UCLASS()
-class EMBERFALL_API AEMBBuildablePiece : public AActor, public IEMBHitReceiver
+class EMBERFALL_API AEMBBuildablePiece : public AActor, public IEMBHitReceiver, public IEMBInteractable
 {
 	GENERATED_BODY()
 
@@ -50,6 +51,24 @@ public:
 	 */
 	const FString& GetPlacerStableId() const { return PlacerStableId; }
 	void SetPlacerStableId(const FString& InStableId) { PlacerStableId = InStableId; }
+
+	/**
+	 * Serveur, avant FinishSpawning : applique les colonnes fonctionnelles de la ligne (point de réapparition, source de
+	 * chaleur, purificateur). À appeler après InitializePiece, à la pose comme au chargement d'une sauvegarde.
+	 */
+	void ApplyRowFunctions(const FEMBBuildPieceRow& Row);
+
+	/** Point de réapparition (lit, feu de camp) : valeur répliquée, utilisable par l'invite d'interaction côté client. */
+	bool IsRespawnPoint() const { return bIsRespawnPoint; }
+
+	/** Lit = point de réapparition de catégorie Furniture : il propose aussi « Dormir ». */
+	bool IsBed() const { return bIsRespawnPoint && Category == EEMBPieceCategory::Furniture; }
+
+	// ----- IEMBInteractable (actif seulement si la pièce est un point de réapparition) -----
+
+	virtual bool CanInteract(const APawn* InInstigator) const override;
+	virtual void Interact(APawn* InInstigator) override;
+	virtual FText GetInteractionText(const APawn* InInstigator) const override;
 
 	/** Serveur, avant FinishSpawning : restaure l'état d'une pièce sauvegardée (PV, poseur). */
 	void RestoreFromSave(float InHealth, const FString& InPlacerStableId);
@@ -144,6 +163,15 @@ protected:
 
 	/** Après une écriture de propriété répliquée sur un acteur dormant : réveil + mise à jour réseau immédiate. */
 	void WakeForReplication();
+
+	/** Serveur : enregistre / retire la pièce auprès de UEMBEnvironmentSubsystem (chaleur, purification). Idempotent. */
+	void RegisterEnvironmentFunctions();
+	void UnregisterEnvironmentFunctions();
+
+	/** Serveur : vrai si une pièce se trouve au-dessus de celle-ci (abri). */
+	bool IsSheltered() const;
+
+	bool bEnvironmentRegistered = false;
 
 protected:
 	// ----- Composants -----
@@ -240,6 +268,23 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Collapsed)
 	bool bCollapsed = false;
+
+	/** Point de réapparition (EditAnywhere : réglable sur une pièce posée à la main). Envoyé une seule fois. */
+	UPROPERTY(EditAnywhere, Replicated, Category = "Building|Function")
+	bool bIsRespawnPoint = false;
+
+	/** Fonctions d'environnement, SERVEUR seulement (la survie tourne sur le serveur) : chaleur et purification. */
+	UPROPERTY(EditAnywhere, Category = "Building|Function")
+	float HeatRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Building|Function")
+	float HeatBonus = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Building|Function")
+	float PurifyRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Building|Function")
+	float PurifyRate = 0.f;
 
 	/** Joueur poseur (APlayerState::GetPlayerId). Envoyé une seule fois. */
 	UPROPERTY(Replicated)

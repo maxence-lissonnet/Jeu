@@ -19,7 +19,7 @@ namespace
 	constexpr float MarkAlignSpeed = 180.f;
 
 	/** Plafond du décalage de prédiction de la position de la cible (cm). */
-	constexpr float MaxPredictionOffset = 800.f;
+	constexpr float DiveMaxPredictionOffset = 800.f;
 }
 
 UBTTask_EMBDragonDiveAttack::UBTTask_EMBDragonDiveAttack()
@@ -168,7 +168,7 @@ void UBTTask_EMBDragonDiveAttack::BeginMark(AEMBDragonBoss& Boss)
 	if (Target)
 	{
 		Predicted = Target->GetActorLocation()
-			+ (Target->GetVelocity() * EMBDragonDefaults::DivePredictionLead).GetClampedToMaxSize(MaxPredictionOffset);
+			+ (Target->GetVelocity() * EMBDragonDefaults::DivePredictionLead).GetClampedToMaxSize(DiveMaxPredictionOffset);
 	}
 
 	MarkerLocation = Boss.ProjectToGround(Predicted);

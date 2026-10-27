@@ -75,13 +75,25 @@ public:
 	void ExportResources(TArray<FEMBResourceStack>& OutResources) const;
 
 	/**
+	 * Serveur : retire TOUT le contenu et le renvoie (sac de mort). L'inventaire est vide ensuite.
+	 * Aucune limite de poids en v1 : le sac contient toutes les ressources.
+	 */
+	void RemoveAllResources(TArray<FEMBResourceStack>& OutResources);
+
+	/**
 	 * Serveur : remplace le contenu par celui d'une sauvegarde. Les entrées invalides (nom vide, quantité <= 0) sont
 	 * ignorées, les doublons fusionnés, les quantités plafonnées à MaxStackPerResource.
 	 */
 	void ImportResources(const TArray<FEMBResourceStack>& InResources);
 
-	/** Poids unitaire d'une ressource (0 si inconnue). Table statique de la section 4.3. */
+	/** Poids unitaire d'une ressource (0 si inconnue). Table statique de la section 4.3 + consommables 10.3. */
 	static float GetUnitWeight(FName ResourceId);
+
+	/**
+	 * Assainit une liste de ressources venant d'un fichier (sauvegarde) : identifiants inconnus, quantités <= 0 et
+	 * doublons écartés/fusionnés, quantités plafonnées, nombre d'entrées borné.
+	 */
+	static void SanitizeResourceList(TArray<FEMBResourceStack>& InOutResources, int32 InMaxStack = 9999);
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")
 	FEMBOnInventoryChanged OnInventoryChanged;

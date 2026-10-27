@@ -2,7 +2,7 @@
 
 #include "BTDecorator_EMBDragonPhase.h"
 
-#include "EMBDragonAIController.h"
+#include "EMBBossAIController.h"
 
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -19,7 +19,7 @@ UBTDecorator_EMBDragonPhase::UBTDecorator_EMBDragonPhase()
 
 	// Seule une clé entière est acceptée ; par défaut CurrentPhase.
 	BlackboardKey.AddIntFilter(this, GET_MEMBER_NAME_CHECKED(UBTDecorator_EMBDragonPhase, BlackboardKey));
-	BlackboardKey.SelectedKeyName = AEMBDragonAIController::BBKey_CurrentPhase;
+	BlackboardKey.SelectedKeyName = AEMBBossAIController::BBKey_CurrentPhase;
 }
 
 bool UBTDecorator_EMBDragonPhase::CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const

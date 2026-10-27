@@ -2,8 +2,8 @@
 
 #include "BTService_EMBUpdateCombatContext.h"
 
-#include "EMBDragonAIController.h"
-#include "EMBDragonBoss.h"
+#include "EMBBossAIController.h"
+#include "EMBBossBase.h"
 #include "EMBDragonTypes.h"
 
 #include "AIController.h"
@@ -24,8 +24,8 @@ void UBTService_EMBUpdateCombatContext::TickNode(UBehaviorTreeComponent& OwnerCo
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
 
-	AEMBDragonAIController* Controller = Cast<AEMBDragonAIController>(OwnerComp.GetAIOwner());
-	AEMBDragonBoss* Boss = Controller ? Cast<AEMBDragonBoss>(Controller->GetPawn()) : nullptr;
+	AEMBBossAIController* Controller = Cast<AEMBBossAIController>(OwnerComp.GetAIOwner());
+	AEMBBossBase* Boss = Controller ? Cast<AEMBBossBase>(Controller->GetPawn()) : nullptr;
 	UBlackboardComponent* Blackboard = OwnerComp.GetBlackboardComponent();
 	if (!Boss || !Blackboard)
 	{
@@ -37,7 +37,7 @@ void UBTService_EMBUpdateCombatContext::TickNode(UBehaviorTreeComponent& OwnerCo
 
 	// --- Choix de la cible ---
 	TArray<APawn*> Players;
-	AEMBDragonBoss::CollectAlivePlayerPawns(Boss->GetWorld(), Players);
+	AEMBBossBase::CollectAlivePlayerPawns(Boss->GetWorld(), Players);
 
 	AActor* CurrentTarget = Controller->GetCombatTarget();
 	AActor* BestTarget = nullptr;
@@ -67,10 +67,11 @@ void UBTService_EMBUpdateCombatContext::TickNode(UBehaviorTreeComponent& OwnerCo
 		}
 	}
 
-	if (BestTarget)
+	if (BestTarget && Boss->CountPlayersWithin(Boss->GetArenaRadius()) > 0)
 	{
-		// Début de rencontre dès qu'une cible est choisie (idempotent). La mise à l'échelle coop des PV est alors
-		// figée : un joueur qui arrive plus tard ne change plus les PV du boss (arbitrage v1.1).
+		// Début de rencontre dès qu'une cible est choisie ET qu'un joueur vivant est dans l'arène (idempotent). Échelle coop figée alors :
+		// un joueur qui arrive plus tard ne change plus les PV du boss (arbitrage v1.1).
+
 		Boss->BeginEncounter();
 	}
 
@@ -85,16 +86,16 @@ void UBTService_EMBUpdateCombatContext::TickNode(UBehaviorTreeComponent& OwnerCo
 		float Distance = 0.f;
 		float Angle = 0.f;
 		Boss->GetDistanceAndAngleTo(BestTarget, Distance, Angle);
-		Blackboard->SetValueAsFloat(AEMBDragonAIController::BBKey_TargetDistance, Distance);
-		Blackboard->SetValueAsFloat(AEMBDragonAIController::BBKey_TargetAngle, Angle);
+		Blackboard->SetValueAsFloat(AEMBBossAIController::BBKey_TargetDistance, Distance);
+		Blackboard->SetValueAsFloat(AEMBBossAIController::BBKey_TargetAngle, Angle);
 	}
 	else
 	{
-		Blackboard->SetValueAsFloat(AEMBDragonAIController::BBKey_TargetDistance, 0.f);
-		Blackboard->SetValueAsFloat(AEMBDragonAIController::BBKey_TargetAngle, 0.f);
+		Blackboard->SetValueAsFloat(AEMBBossAIController::BBKey_TargetDistance, 0.f);
+		Blackboard->SetValueAsFloat(AEMBBossAIController::BBKey_TargetAngle, 0.f);
 	}
 
-	Blackboard->SetValueAsInt(AEMBDragonAIController::BBKey_ThreatCount, Boss->CountPlayersWithin(EMBDragonDefaults::ThreatCountRadius));
+	Blackboard->SetValueAsInt(AEMBBossAIController::BBKey_ThreatCount, Boss->CountPlayersWithin(EMBDragonDefaults::ThreatCountRadius));
 }
 
 FString UBTService_EMBUpdateCombatContext::GetStaticDescription() const

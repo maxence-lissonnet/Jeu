@@ -10,6 +10,10 @@ namespace EMBTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Combat_HyperArmor, "State.Combat.HyperArmor", "Hyper-armure : la poise subie est réduite de moitié.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Dead, "State.Dead", "Acteur mort.");
 
+	// --- États de joueur et de survie (v1.3) ---
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Survival_Whispers, "State.Survival.Whispers", "Corruption >= 25 : chuchotements.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Player_DeadAwaitingRespawn, "State.Player.DeadAwaitingRespawn", "Joueur mort en attente de réapparition ou de réanimation.");
+
 	// --- Attaques du joueur ---
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Attack_Player_Light, "Attack.Player.Light", "Attaque légère du joueur.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Attack_Player_Heavy, "Attack.Player.Heavy", "Attaque lourde du joueur.");

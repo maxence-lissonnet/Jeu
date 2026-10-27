@@ -4,17 +4,17 @@
 
 #include "Emberfall.h"
 
-bool UEMBSaveGame::MigrateToCurrent()
+EEMBMigrationResult UEMBSaveGame::MigrateToCurrent()
 {
 	if (SaveFormatVersion > CurrentFormatVersion)
 	{
-		UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde de version %d plus recente que ce binaire (version %d) : ignoree."), SaveFormatVersion, CurrentFormatVersion);
-		return false;
+		UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde de version %d plus recente que ce binaire (version %d)."), SaveFormatVersion, CurrentFormatVersion);
+		return EEMBMigrationResult::TooRecent;
 	}
 	if (SaveFormatVersion < 1)
 	{
 		UE_LOG(LogEmberfall, Warning, TEXT("Sauvegarde de version %d invalide : ignoree."), SaveFormatVersion);
-		return false;
+		return EEMBMigrationResult::Invalid;
 	}
 
 	while (SaveFormatVersion < CurrentFormatVersion)
@@ -22,19 +22,25 @@ bool UEMBSaveGame::MigrateToCurrent()
 		if (!MigrateStep(SaveFormatVersion))
 		{
 			UE_LOG(LogEmberfall, Warning, TEXT("Echec de la migration de la sauvegarde de la version %d vers %d."), SaveFormatVersion, SaveFormatVersion + 1);
-			return false;
+			return EEMBMigrationResult::Invalid;
 		}
 		++SaveFormatVersion;
 	}
-	return true;
+	return EEMBMigrationResult::Ok;
 }
 
 bool UEMBSaveGame::MigrateStep(int32 FromVersion)
 {
 	switch (FromVersion)
 	{
-	// Version 1 = format initial : aucune migration à ce jour. Les futures étapes s'ajoutent ici :
-	//   case 1: /* convertir 1 -> 2 */ return true;
+	case 1:
+		// 1 -> 2 : la version 2 n'a fait qu'AJOUTER des champs (survie, liaison de réapparition, sacs de mort). Le système
+		// de propriétés étiquetées les laisse à leur valeur par défaut à la lecture d'un fichier v1 :
+		//  - bHasSurvivalState = false : les joueurs reprennent les valeurs de survie par défaut ;
+		//  - BoundRespawnPieceSaveId = INDEX_NONE : aucune liaison (PlayerStart) ;
+		//  - DeathBags vide : aucun sac.
+		// Rien à convertir. Les futures étapes s'ajoutent ici (case 2: ...).
+		return true;
 	default:
 		return false;
 	}

@@ -20,7 +20,14 @@ enum class EEMBDragonAttackKind : uint8
 	Dive      UMETA(DisplayName = "Piqué"),
 	Area      UMETA(DisplayName = "Zone (rafale, pluie de braises)"),
 	Grab      UMETA(DisplayName = "Saisie"),
-	Scripted  UMETA(DisplayName = "Scripté (Cataclysm)")
+	Scripted  UMETA(DisplayName = "Scripté (Cataclysm)"),
+	// --- Ajouts v1.3 (valeurs numériques 6 à 8, écrites dans le Blackboard : SelectedAttackKind) ---
+	Charge    UMETA(DisplayName = "Charge au sol (course en ligne)"),
+	Channel   UMETA(DisplayName = "Canalisation (soin, interruptible)"),
+	Rings     UMETA(DisplayName = "Anneaux expansifs"),
+	// --- Ajouts v1.3 boss 2, Nyxariel (valeurs numériques 9 et 10, écrites dans le Blackboard : SelectedAttackKind) ---
+	Dash      UMETA(DisplayName = "Dash balayé (estoc, feinte)"),
+	Plunge    UMETA(DisplayName = "Plongeon scripté (piqué en spirale, chute de l'étoile morte)")
 };
 
 /** Variante de souffle (utilisée par BTTask_EMBDragonBreath, ignorée pour les autres familles). */

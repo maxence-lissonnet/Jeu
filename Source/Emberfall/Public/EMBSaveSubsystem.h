@@ -107,6 +107,21 @@ public:
 	 */
 	static TSoftObjectPtr<UDataTable> GetConfiguredBuildPiecesTable();
 
+	/**
+	 * Clé d'un joueur pour les sacs et les liaisons : son identifiant stable réclamé à RestorePlayer ; pour un joueur
+	 * non persisté (identifiant en doublon), "Session_<PlayerId>" (jamais sauvegardé). Vide sans PlayerState.
+	 */
+	FString GetPlayerKey(const APlayerController* PC) const;
+
+	/** Faux si le joueur a été refusé comme doublon d'identifiant (ses données ne sont pas sauvegardées). */
+	bool IsPlayerPersisted(const APlayerController* PC) const;
+
+	/**
+	 * Dernier point sûr relevé pour cet identifiant (position vivante, au sol, hors combat, relevée toutes les 10 s).
+	 * Exposé pour le sac de mort quand la mort a lieu hors sol (chute, vide).
+	 */
+	bool GetLastSafeTransform(const FString& StableId, FTransform& OutTransform) const;
+
 	UPROPERTY(BlueprintAssignable, Category = "Emberfall|Save")
 	FEMBOnSaveCompleted OnSaveCompleted;
 
@@ -194,7 +209,9 @@ private:
 	UEMBSaveGame* BuildSnapshot();
 	void StartWrite();
 	void OnSlotSaved(const FString& SlotName, const int32 UserIndex, bool bSuccess);
-	void CapturePieces(TArray<FEMBPieceSaveData>& OutPieces) const;
+	/** Capture les pièces posées par des joueurs ; renvoie aussi le SaveId attribué à chaque pièce (liaisons de réapparition). */
+	void CapturePieces(TArray<FEMBPieceSaveData>& OutPieces, TMap<const AEMBBuildablePiece*, int32>& OutSaveIds) const;
+	void CaptureDeathBags(TArray<FEMBDeathBagSaveData>& OutBags) const;
 	FString BuildSlotName(bool bSlotA) const;
 	bool IsBossEncounterActive() const;
 
@@ -228,6 +245,9 @@ private:
 	uint32 InFlightWriteGeneration = 0;
 	bool bSavePending = false;
 	bool bSaveDeferredByBoss = false;
+
+	/** Instant (secondes du monde) où la sauvegarde a commencé à être reportée à cause d'un boss. */
+	double DeferredSinceTime = 0.0;
 
 	/** Un fichier illisible (version inconnue...) existe : aucune écriture, sous peine de le détruire. */
 	bool bBlockedByUnusableSave = false;

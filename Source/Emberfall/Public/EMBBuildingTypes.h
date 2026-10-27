@@ -74,6 +74,11 @@ namespace EMBBuildingDefaults
 	constexpr float PreplacedGracePeriod = 1.0f;            // s avant la 1re évaluation d'intégrité (pièces pré-placées / streamées)
 	constexpr float MinContactSizeDefault = 10.f;           // cm, recouvrement minimal pour un contact par une face
 	constexpr double MaxWorldCoordinate = 2097152.0;        // cm, limite du monde UE : borne des coordonnées acceptées (RPC, sauvegarde)
+	constexpr float RespawnFrontOffset = 150.f;             // cm, décalage devant un point de réapparition (référentiel 9.2)
+	constexpr float DeathBagGroundTraceDepth = 500.f;       // cm, projection du lieu de la mort sur le sol (référentiel 9.2)
+	constexpr float BedCorruptionReduction = 50.f;          // Corruption retirée en dormant à l'abri
+	constexpr float BedSleepCooldownSeconds = 120.f;        // s entre deux réductions de Corruption par le sommeil, par joueur
+	constexpr float ShelterTraceHeight = 2000.f;            // cm, portée de la trace vers le haut qui détecte un abri
 	constexpr float SocketSnapRadius = 150.f;               // cm
 	constexpr float OverlapBoxShrink = 0.95f;               // boîte réduite de 5 % pour tolérer les contacts
 	constexpr float RotationStepSnapped = 90.f;             // degrés
@@ -191,6 +196,26 @@ struct EMBERFALL_API FEMBBuildPieceRow : public FTableRowBase
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building")
 	FName RequiredGlyph = NAME_None;
+
+	// ---- Colonnes v1.3 (ajoutées en fin de ligne : les CSV plus anciens restent importables) ----
+
+	/** Point de réapparition : le joueur s'y lie par interaction (lit, feu de camp). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Function")
+	bool bIsRespawnPoint = false;
+
+	/** Source de chaleur : rayon (cm) et bonus de température (°C). 0 = aucune. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Function", meta = (ClampMin = "0"))
+	float HeatRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Function")
+	float HeatBonus = 0.f;
+
+	/** Purificateur de Corruption : rayon (cm) et taux (points par seconde). 0 = aucun. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Function", meta = (ClampMin = "0"))
+	float PurifyRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Building|Function", meta = (ClampMin = "0"))
+	float PurifyRate = 0.f;
 
 	/** Mobilier et postes d'artisanat : rotation par 15 degrés, jamais porteurs. */
 	bool IsFurnitureLike() const

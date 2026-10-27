@@ -1170,6 +1170,9 @@ void UEMBBuildingComponent::Server_PlacePiece_Implementation(FName PieceRowName,
 	}
 	Piece->InitializePiece(PieceRowName, Row.Material, Row.Category, Evaluation.bAnchoredToGround, PlacerPlayerId);
 
+	// Fonctions de la ligne (point de réapparition, chaleur, purification) : posées avant BeginPlay.
+	Piece->ApplyRowFunctions(Row);
+
 	// Identifiant stable du poseur (survit aux sessions, contrairement à PlayerId) : stocké pour la sauvegarde.
 	if (const APawn* PlacerPawn = Cast<APawn>(OwnerActor))
 	{

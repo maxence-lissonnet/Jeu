@@ -113,8 +113,20 @@ struct EMBERFALL_API FEMBHitData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hit")
 	bool bDamageOverTime = false;
 
+	/** Corruption ajoutée à la cible par ce coup, indépendamment du type de dégâts (lue par la survie). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hit")
+	float CorruptionAmount = 0.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hit")
 	FGameplayTag AttackTag;
+
+	/**
+	 * Zone létale inaccessible (lave, vide...) : si ce coup tue un joueur, son sac de mort est déposé à son
+	 * dernier point sûr au lieu de l'endroit de la mort. Une mort de faim, de froid, de brûlure ou
+	 * d'intoxication laisse le sac sur place.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hit")
+	bool bLethalZone = false;
 };
 
 /** Paramètres d'une fenêtre de coup (portés par EMBAnimNotifyState_HitWindow). */
@@ -269,4 +281,15 @@ namespace EMBCombatDefaults
 	inline constexpr float ParryRiposteWindow = 1.5f;            // 90 f : riposte sur ennemi standard paré
 	inline constexpr float BossPostureBreakDuration = 4.0f;      // 240 f
 	inline constexpr float CriticalRiposteMultiplier = 3.0f;     // riposte sur boss étourdi
+
+	// ---- 9.2 Mort, réapparition, réanimation (référentiel v1.3) ----
+	inline constexpr float RespawnMinDelay = 3.0f;               // 180 f : délai avant de pouvoir demander la réapparition
+	inline constexpr float RespawnAutoDelay = 30.0f;             // 1 800 f : réapparition automatique (fenêtre de réanimation en coop)
+	inline constexpr float ReviveHoldTime = 4.0f;                // maintien d'Interagir pour réanimer un allié
+	inline constexpr float ReviveHealthFraction = 0.30f;         // PV rendus à la réanimation
+	inline constexpr float ReviveStaminaFraction = 0.50f;        // endurance rendue à la réanimation
+	inline constexpr float SpawnProtectionDuration = 3.0f;       // invulnérabilité après réapparition ou réanimation
+	inline constexpr float InteractRange = 250.f;                // cm : portée d'interaction et de réanimation
+	inline constexpr float InteractHoldCheckInterval = 0.25f;    // s : contrôle serveur d'une interaction maintenue
+	inline constexpr float MaxFireResistance = 0.9f;             // plafond de la résistance au feu (passif + bonus)
 }

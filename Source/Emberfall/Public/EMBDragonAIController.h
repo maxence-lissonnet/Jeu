@@ -56,74 +56,16 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AIController.h"
-#include "Perception/AIPerceptionTypes.h"
+#include "EMBBossAIController.h"
 #include "EMBDragonAIController.generated.h"
 
-class UAISenseConfig_Sight;
-class UBehaviorTree;
-class UBlackboardData;
-
 /**
- * Contrôleur IA de Vaelthyrax. Existe uniquement sur le serveur (les AIController ne sont pas répliqués) :
- * le Behavior Tree, la perception et le choix des cibles ne tournent donc que côté serveur autoritaire.
+ * Contrôleur IA de Vaelthyrax. Toute la logique (possession, Blackboard, perception, cible) vit dans
+ * AEMBBossAIController ; cette classe fine conserve le nom historique et porte la documentation du Behavior Tree
+ * du dragon (en-tête de ce fichier). Les constantes BBKey_* sont héritées de la base.
  */
 UCLASS()
-class EMBERFALL_API AEMBDragonAIController : public AAIController
+class EMBERFALL_API AEMBDragonAIController : public AEMBBossAIController
 {
 	GENERATED_BODY()
-
-public:
-	AEMBDragonAIController();
-
-	// --- Clés du Blackboard (noms exacts à créer dans BB_Vaelthyrax) ---
-	static const FName BBKey_TargetActor;
-	static const FName BBKey_TargetDistance;
-	static const FName BBKey_TargetAngle;
-	static const FName BBKey_CurrentPhase;
-	static const FName BBKey_IsFlying;
-	static const FName BBKey_IsStunned;
-	static const FName BBKey_IsTransitioning;
-	static const FName BBKey_IsDead;
-	static const FName BBKey_IsVulnerable;
-	static const FName BBKey_CataclysmDue;
-	static const FName BBKey_ThreatCount;
-	static const FName BBKey_SelectedAttackTag;
-	static const FName BBKey_SelectedAttackKind;
-	static const FName BBKey_SelectedAttackDuration;
-
-	/** Pousse immédiatement les états critiques du boss (phase, vol, étourdi, transition, mort) dans le Blackboard. */
-	void SyncBlackboardState();
-
-	/** Définit la cible de combat : écrit TargetActor et oriente le regard du dragon (sauf si l'orientation est figée). */
-	void SetCombatTarget(AActor* NewTarget);
-
-	/** Fige (true) ou libère (false) le suivi de la cible du regard pendant l'engagement d'une attaque. */
-	void SetFacingLocked(bool bLocked);
-
-	AActor* GetCombatTarget() const { return CombatTarget.Get(); }
-
-protected:
-	virtual void OnPossess(APawn* InPawn) override;
-	virtual void OnUnPossess() override;
-
-	UFUNCTION()
-	void HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
-
-	/** Arbre de comportement à exécuter (BT_Vaelthyrax). */
-	UPROPERTY(EditDefaultsOnly, Category = "Emberfall|Dragon|AI")
-	TObjectPtr<UBehaviorTree> BehaviorTreeAsset;
-
-	/** Blackboard associé (BB_Vaelthyrax). */
-	UPROPERTY(EditDefaultsOnly, Category = "Emberfall|Dragon|AI")
-	TObjectPtr<UBlackboardData> BlackboardAsset;
-
-	UPROPERTY(VisibleAnywhere, Category = "Emberfall|Dragon|AI")
-	TObjectPtr<UAISenseConfig_Sight> SightConfig;
-
-private:
-	void ApplyFocus();
-
-	TWeakObjectPtr<AActor> CombatTarget;
-	bool bFacingLocked = false;
 };

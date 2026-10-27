@@ -3,8 +3,8 @@
 #include "BTTask_EMBSelectAttack.h"
 
 #include "Emberfall.h"
-#include "EMBDragonAIController.h"
-#include "EMBDragonBoss.h"
+#include "EMBBossAIController.h"
+#include "EMBBossBase.h"
 #include "EMBDragonTypes.h"
 #include "EMBGameplayTags.h"
 
@@ -69,7 +69,7 @@ namespace
 
 UBTTask_EMBSelectAttack::UBTTask_EMBSelectAttack()
 {
-	NodeName = TEXT("EMB Select Dragon Attack");
+	NodeName = TEXT("EMB Select Boss Attack");
 	// Une instance par arbre : le flux aléatoire est propre au noeud.
 	bCreateNodeInstance = true;
 }
@@ -77,7 +77,7 @@ UBTTask_EMBSelectAttack::UBTTask_EMBSelectAttack()
 EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	AAIController* AIController = OwnerComp.GetAIOwner();
-	AEMBDragonBoss* Boss = AIController ? Cast<AEMBDragonBoss>(AIController->GetPawn()) : nullptr;
+	AEMBBossBase* Boss = AIController ? Cast<AEMBBossBase>(AIController->GetPawn()) : nullptr;
 	UBlackboardComponent* Blackboard = OwnerComp.GetBlackboardComponent();
 	if (!Boss || !Blackboard || !Boss->HasAuthority() || Boss->IsDead())
 	{
@@ -94,7 +94,7 @@ EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent&
 		}
 	}
 
-	const AActor* Target = Cast<AActor>(Blackboard->GetValueAsObject(AEMBDragonAIController::BBKey_TargetActor));
+	const AActor* Target = Cast<AActor>(Blackboard->GetValueAsObject(AEMBBossAIController::BBKey_TargetActor));
 	if (!Target)
 	{
 		return EBTNodeResult::Failed;
@@ -107,8 +107,6 @@ EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent&
 	Boss->GetDistanceAndAngleTo(Target, Distance, SignedAngle);
 
 	const int32 Phase = Boss->GetCurrentPhase();
-	const bool bCrowded = Boss->CountPlayersWithin(EMBDragonDefaults::WingBuffetCrowdRadius) >= EMBDragonDefaults::WingBuffetCrowdCount;
-	const FGameplayTag WingBuffetTag = EMBTags::Attack_Dragon_WingBuffet.GetTag();
 
 	TArray<FWeightedCandidate, TInlineAllocator<16>> Candidates;
 	float TotalWeight = 0.f;
@@ -116,7 +114,8 @@ EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent&
 	for (const FEMBDragonAttackRow* Row : Boss->GetAttackRows())
 	{
 		// Exclusions : attaque scriptée (Cataclysm), interdite en phase courante, en recharge.
-		if (Row->bScripted || !Row->IsAllowedInPhase(Phase) || Boss->IsAttackOnCooldown(Row->AttackTag))
+		// IsAttackAllowed : filtre propre au boss (ex. Résonance exclue sans obélisque intact).
+		if (Row->bScripted || !Row->IsAllowedInPhase(Phase) || Boss->IsAttackOnCooldown(Row->AttackTag) || !Boss->IsAttackAllowed(*Row))
 		{
 			continue;
 		}
@@ -140,11 +139,8 @@ EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent&
 			Weight *= EMBDragonDefaults::RepeatPenaltyPrevious;
 		}
 
-		// Rafale d'ailes : réponse à un groupe de joueurs collés au dragon.
-		if (bCrowded && Row->AttackTag == WingBuffetTag)
-		{
-			Weight *= EMBDragonDefaults::WingBuffetCrowdMultiplier;
-		}
+		// Modificateur propre au boss (dragon : rafale d'ailes x3 si groupe de joueurs collés au boss).
+		Weight *= Boss->GetAttackWeightModifier(*Row);
 
 		if (Weight > 0.f)
 		{
@@ -185,15 +181,17 @@ EBTNodeResult::Type UBTTask_EMBSelectAttack::ExecuteTask(UBehaviorTreeComponent&
 	float Duration = 0.f;
 	const bool bTimedKind = Chosen->Kind == EEMBDragonAttackKind::Melee
 		|| Chosen->Kind == EEMBDragonAttackKind::Area
-		|| Chosen->Kind == EEMBDragonAttackKind::Grab;
+		|| Chosen->Kind == EEMBDragonAttackKind::Grab
+		|| Chosen->Kind == EEMBDragonAttackKind::Rings
+		|| Chosen->Kind == EEMBDragonAttackKind::Channel;
 	if (bStartTimedAttacks && bTimedKind)
 	{
 		Duration = Boss->BeginTimedAttack(*Chosen);
 	}
 
-	Blackboard->SetValueAsName(AEMBDragonAIController::BBKey_SelectedAttackTag, Chosen->AttackTag.GetTagName());
-	Blackboard->SetValueAsInt(AEMBDragonAIController::BBKey_SelectedAttackKind, static_cast<int32>(Chosen->Kind));
-	Blackboard->SetValueAsFloat(AEMBDragonAIController::BBKey_SelectedAttackDuration, Duration);
+	Blackboard->SetValueAsName(AEMBBossAIController::BBKey_SelectedAttackTag, Chosen->AttackTag.GetTagName());
+	Blackboard->SetValueAsInt(AEMBBossAIController::BBKey_SelectedAttackKind, static_cast<int32>(Chosen->Kind));
+	Blackboard->SetValueAsFloat(AEMBBossAIController::BBKey_SelectedAttackDuration, Duration);
 
 	UE_LOG(LogEmberfall, Verbose, TEXT("Vaelthyrax : attaque %s (distance %.0f, angle %.0f, %d candidates)"),
 		*Chosen->AttackTag.ToString(), Distance, SignedAngle, Candidates.Num());

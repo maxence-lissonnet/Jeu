@@ -37,6 +37,9 @@ EmberfallGDD/
 │   └── Tags/EmberfallSkills.ini   (tags Skill.*)
 ├── Data/
 │   ├── DT_DragonAttacks.csv       (FEMBDragonAttackRow, 11 attaques)
+│   ├── DT_ColossusAttacks.csv     (même struct, 9 attaques du Colosse)
+│   ├── DT_SeraphAttacks.csv       (même struct, 9 attaques de Nyxariel)
+│   ├── DT_Consumables.csv         (FEMBConsumableRow, 9 consommables)
 │   ├── DT_Glyphs.csv              (FEMBGlyphRow, 36 glyphes dont 6 secrets)
 │   ├── DT_SkillNodes.csv          (FEMBSkillNodeRow, 20 nœuds)
 │   └── DT_BuildPieces.csv         (FEMBBuildPieceRow)
@@ -67,7 +70,12 @@ Fichiers du module, par système :
 | Partie et joueurs | `AEMBGameMode`, `AEMBPlayerState`, `AEMBDiscoveryVolume` (lieux découverts) |
 | Progression | `EMBProgressionTypes.h`, `UEMBProgressionSettings` (réglages `DefaultGame.ini`), `UEMBProgressionComponent` (sur le PlayerState, répliqué), `UEMBProgressionSubsystem` (règles, DataTables, événements monde) |
 | Sauvegarde | `EMBSaveTypes.h`, `UEMBSaveGame` (format versionné), `UEMBSaveSubsystem` (GameInstance : slots A/B, autosave 300 s, restauration des joueurs, reconstruction des bases) |
-| IA du dragon | `AEMBDragonBoss`, `AEMBDragonAIController`, `AEMBDragonArena`, `UBTTask_EMBSelectAttack`, `UBTTask_EMBDragonBreath`, `UBTTask_EMBDragonDiveAttack`, `UBTService_EMBUpdateCombatContext`, `UBTDecorator_EMBDragonPhase`, `EMBDragonTypes.h` |
+| Mort et réapparition (v1.3) | `IEMBInteractable`, `AEMBDeathBag` (sac), `UEMBRespawnSubsystem` (lits / feux de camp, liaisons), réanimation par un allié dans `AEMBPlayerCharacter`, `AEMBGameMode::RespawnPlayer` |
+| Survie (v1.3) | `EMBSurvivalTypes.h`, `UEMBSurvivalComponent` (faim, soif, température, Corruption, consommables), `UEMBEnvironmentSubsystem` (température, nuit, chaleur, purification — à alimenter par un futur système météo / jour-nuit), `AEMBEnvironmentVolume` (biomes) |
+| Boss (base commune, v1.3) | `AEMBBossBase`, `AEMBBossAIController`, `EMBBossTags`, `UBTTask_EMBSelectAttack`, `UBTService_EMBUpdateCombatContext`, `UBTDecorator_EMBDragonPhase`, `EMBDragonTypes.h` (`FEMBBossAttackRow`) |
+| Boss 1 — Colosse d'Ossivaire | `AEMBColossusBoss`, `AEMBColossusArena` + `AEMBObelisk`, `UBTTask_EMBColossusCharge` |
+| Boss 2 — Nyxariel | `AEMBSeraphBoss`, `AEMBSeraphShadow` (clones), `AEMBSeraphArena` + `AEMBSeraphBell`, `AEMBProjectile` (poolé), `UBTTask_EMBSeraphDash`, `UBTTask_EMBSeraphPlunge`, `UBTTask_EMBSeraphReposition` |
+| Boss final — Vaelthyrax | `AEMBDragonBoss`, `AEMBDragonAIController`, `AEMBDragonArena`, `UBTTask_EMBDragonBreath`, `UBTTask_EMBDragonDiveAttack` |
 
 ## Intégrer le module dans un projet UE5
 
@@ -82,12 +90,13 @@ Fichiers du module, par système :
    ```
 3. Ajouter `"Emberfall"` à `ExtraModuleNames` dans les fichiers `*.Target.cs`.
 4. Dépendances déjà déclarées dans `Emberfall.Build.cs` : `Core`, `CoreUObject`, `Engine`, `InputCore`, **`EnhancedInput`**, **`GameplayTags`**, **`AIModule`**, **`NavigationSystem`**, **`Niagara`**, **`UMG`**, `NetCore`, `GameplayTasks` (Behavior Trees), `Slate`, `SlateCore`. Les débris Chaos passent par un acteur Blueprint (Geometry Collection) : ajouter `Chaos` et `GeometryCollectionEngine` seulement si du C++ doit les manipuler directement.
-5. Reprendre dans `Config/DefaultEngine.ini` : classe d'input Enhanced Input, canaux `EMBMeleeHit` (`ECC_GameTraceChannel1`) et `EMBBuilding` (`ECC_GameTraceChannel2`) — si le projet utilise déjà ces canaux, les renuméroter et ajuster les valeurs par défaut dans `UEMBCombatComponent` et `UEMBBuildingComponent`.
+5. Reprendre dans `Config/DefaultEngine.ini` : classe d'input Enhanced Input, canaux `EMBMeleeHit` (`ECC_GameTraceChannel1`), `EMBBuilding` (`ECC_GameTraceChannel2`) et `EMBProjectile` (`ECC_GameTraceChannel3`) — si le projet utilise déjà ces canaux, les renuméroter et ajuster les valeurs par défaut dans `UEMBCombatComponent` et `UEMBBuildingComponent`.
 6. Copier `Config/Tags/EmberfallGlyphs.ini` et `EmberfallSkills.ini` dans `Config/Tags/`, et reprendre dans `DefaultGame.ini` les sections `EMBProgressionSettings` et `EMBSaveSubsystem` (chemins des DataTables sous `/Game/Data/`) et `DirectoriesToAlwaysCook`, dans `DefaultEngine.ini` le `GlobalDefaultGameMode`.
 7. Régénérer les fichiers de projet et compiler.
 
 **Après la compilation (dans l'éditeur)** :
-- Importer les CSV de `Data/` en DataTables avec les structs `FEMBDragonAttackRow`, `FEMBGlyphRow`, `FEMBSkillNodeRow`, `FEMBBuildPieceRow`, et les enregistrer sous `/Game/Data/` (`DT_Glyphs`, `DT_SkillNodes`, `DT_BuildPieces`) : la progression et la sauvegarde les chargent par ces chemins.
+- Importer les CSV de `Data/` en DataTables avec les structs `FEMBDragonAttackRow` (aussi pour `DT_ColossusAttacks` et `DT_SeraphAttacks`), `FEMBGlyphRow`, `FEMBSkillNodeRow`, `FEMBBuildPieceRow`, `FEMBConsumableRow`, et les enregistrer sous `/Game/Data/` (`DT_Glyphs`, `DT_SkillNodes`, `DT_BuildPieces`, `DT_Consumables`) : la progression, la survie et la sauvegarde les chargent par ces chemins.
+- Créer les Behavior Trees et Blackboards du Colosse et de Nyxariel (structure en commentaire d'en-tête de `EMBColossusBoss.h` et `EMBSeraphBoss.h`), les Blueprints des boss, du sac, des projectiles, clones, cloches et obélisques ; les Input Actions `IA_Interact`, `IA_Respawn` (optionnelle), `IA_QuickConsume` (optionnelle).
 - Créer les Blueprints enfants (`BP_PlayerCharacter`, `BP_Vaelthyrax`, `BP_DragonAIController`, pièces de construction), assigner montages, Input Actions, Mapping Context, matériau fantôme (paramètre `GhostColor`), DataTables.
 - Placer les AnimNotifyStates (`ComboWindow`, `HitWindow`) dans les montages d'attaque ; les i-frames de roulade sont pilotées par le code (le notify `IFrames` est optionnel).
 - Créer le Blackboard et le Behavior Tree du dragon selon `docs/02_Architecture.md` §4.
@@ -99,8 +108,8 @@ Fichiers du module, par système :
 |---|---|
 | Compilation C++ (UHT, UBT) | **Non vérifiée** : aucun build n'a été lancé, Unreal n'est pas installé. Attendez-vous à des corrections au premier build. |
 | Exécution, tests de gameplay, tests réseau | **Non réalisés.** |
-| Revue de code statique | Trois relectures indépendantes (noyau/combat, construction, IA du dragon), une passe de corrections groupée, puis une revue d'intégration de l'ensemble (≈ 12 700 lignes : appels croisés, signatures, délégués, CSV ↔ structs) et une passe de micro-correctifs. Aucune erreur de compilation certaine relevée, mais les API ont été vérifiées **de mémoire**, pas contre les sources du moteur. |
-| Fonctionnalités prévues mais non codées | Mort et réapparition (seule la sauvegarde d’un joueur mort est gérée), jauges de survie (faim, soif, température, Corruption : leurs passifs sont stockés mais sans effet), exécution des compétences actives, équipement, artisanat/recettes de forge, UI, boss 1 et 2 (Gardien, Séraphe) et créatures, donc aucune autre source d’XP que le dragon et les lieux découverts. **Conséquence** : `G_DraconicForge` exige la mort du Séraphe et reste inaccessible tant qu’il n’est pas codé. |
+| Revue de code statique | v1.1 : trois relectures par système, corrections, revue d’intégration. v1.2 (progression, sauvegarde) et v1.3 (mort, survie, boss) : à chaque fois une revue par système, une revue d’intégration, puis une passe de corrections groupée. Aucune erreur de compilation certaine relevée, mais les API ont été vérifiées **de mémoire**, pas contre les sources du moteur. |
+| Fonctionnalités prévues mais non codées (après v1.3) | Système météo et cycle jour/nuit (seuls les points d'entrée de l'environnement existent), exécution des compétences actives, équipement (isolation thermique, poids d'équipement), artisanat/recettes de forge, récolte (le passif `HarvestYield` reste sans effet), UI, créatures et dragons territoriaux, ennemi « Possédé » à Corruption 100. Sources d'XP : les trois boss et les lieux découverts seulement. |
 | Cohérence des valeurs GDD ↔ code ↔ CSV | Contrôlée par le chef d'équipe et les relecteurs contre `00_Constantes_et_Contrats.md`. |
 | Import des CSV dans l'éditeur | **Non testé** ; structure des colonnes vérifiée par lecture (PowerShell `Import-Csv`). |
 | Diagrammes Mermaid | Non rendus dans un outil. |
@@ -112,7 +121,7 @@ Fichiers du module, par système :
 | Réglage (`Config/DefaultGame.ini`) | Valeur codée par défaut | Alternative |
 |---|---|---|
 | `SecretGlyphMode` | `RevealOnly` : un déclencheur secret (boss vaincu, lieu découvert) **révèle** le glyphe, qui reste à acheter | `AutoUnlock` : débloqué gratuitement si niveau, parents et savoirs sont remplis |
-| `DeathSaveBehavior` | `RespawnAtSafePoint` : un joueur mort au moment de la sauvegarde est enregistré PV pleins au dernier point sûr | `KeepPosition` |
+| `DeathSaveBehavior` | `RespawnAtSafePoint` : un joueur mort au moment de la sauvegarde est enregistré PV pleins au point de réapparition lié, sinon au dernier point sûr ; aucun sac n’est créé (quitter en étant mort évite donc la perte du sac) | `KeepPosition` |
 | Sauvegarde illisible (version plus récente que le jeu) | aucune écriture pendant la session (le fichier n'est pas écrasé), erreur dans le journal | refuser de démarrer le monde |
 
 Identifiant de joueur sauvegardé : identifiant Steam/EOS s'il existe ; sinon `LocalHost` pour l'hôte et `Guest_<nom>` pour un client (non garanti unique ; un second joueur connecté avec le même identifiant démarre un personnage neuf non sauvegardé).
